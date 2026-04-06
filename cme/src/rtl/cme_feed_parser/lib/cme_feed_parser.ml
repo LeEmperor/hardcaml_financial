@@ -1,33 +1,44 @@
+(*
+  this is an MDP 3.0 Unpacker
+*)
+
 open Hardcaml
 
 module Cme_feed_parser = struct
-  (** Input ports *)
+  (* input port *)
   module I = struct
     type 'a t =
-      { clock : 'a
-      ; clear : 'a
-      ; valid : 'a
-      ; data  : 'a [@bits 64]
+      { 
+        clk   : 'a;
+        rst   : 'a;
+
+        (* behave like an AXIS *)
+        valid : 'a;
+        data  : 'a [@bytes 64];
       }
     [@@deriving hardcaml]
   end
 
-  (** Output ports *)
+  (* output port*)
   module O = struct
     type 'a t =
-      { ready        : 'a
-      ; msg_valid    : 'a
-      ; msg_data     : 'a [@bits 64]
+      {
+        data : 'a [@bits 512];
+        slave_ready : 'a;
       }
     [@@deriving hardcaml]
   end
 
   (** Combinational/RTL implementation *)
   let create (i : _ I.t) : _ O.t =
+
+
+
+
+    (* resulting thingy *)
     { 
-      O.ready     = Signal.vdd ;
-      msg_valid   = i.valid ;
-      msg_data    = i.data
+      O.data = Signal.vdd;
+      O.slave_ready     = Signal.vdd;
     }
 
 end
