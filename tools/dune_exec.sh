@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+if [ "$#" -lt 1 ]; then
+  echo "usage: dune_exec.sh <dune-executable> [args...]" >&2
+  exit 1
+fi
+
+EXE="$1"
+shift
+
+exec ./scripts/with-switch.sh dune exec "$EXE" -- "$@"

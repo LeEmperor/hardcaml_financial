@@ -1,0 +1,12 @@
+(executables
+ (modes byte exe)
+ (names generate)
+ (libraries
+  core
+  hardcaml
+  cme_of_hardcaml)
+ (modules generate)
+ (flags (:standard -w -27-57-33-34-35-40-63-47-26))
+ (preprocess
+  (pps ppx_jane))
+ (promote))

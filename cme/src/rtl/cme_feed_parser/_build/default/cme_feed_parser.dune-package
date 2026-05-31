@@ -1,4 +1,0 @@
-(lang dune 3.20)
-(name cme_feed_parser)
-(sections (lib .) (bin ../../bin))
-(files (lib (META dune-package opam)) (bin (cme_feed_parser)))

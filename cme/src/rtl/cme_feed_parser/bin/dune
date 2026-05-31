@@ -1,6 +1,0 @@
-(executable
- (public_name cme_feed_parser)
- (name main)
- (libraries cme_feed_parser hardcaml ppx_hardcaml core)
- (preprocess(pps ppx_jane ppx_hardcaml))
-)

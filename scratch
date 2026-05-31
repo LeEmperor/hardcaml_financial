@@ -154,3 +154,7 @@
   ---
   The elegance at the FPGA level is that binary fixed-width protocols like ITCH reduce the "parser" to almost nothing — it's just bit-field extraction. The
   complexity lives in the order book engine and the gap/retransmit logic around it.
+
+
+
+

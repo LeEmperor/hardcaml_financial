@@ -1,3 +1,0 @@
-(test
- (name test_cme_feed_parser)
- (libraries cme_feed_parser hardcaml))
