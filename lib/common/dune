@@ -4,9 +4,22 @@
  (libraries
   core
   hardcaml
-  cme_of_hardcaml)
+  uart_of_hardcaml
+  helper_circuits
+  cme_of_hardcaml
+  )
  (modules generate)
  (flags (:standard -w -27-57-33-34-35-40-63-47-26))
  (preprocess
   (pps ppx_jane))
  (promote))
+
+(library
+ (name helper_circuits)
+ (wrapped false)
+ (libraries core hardcaml hardcaml_circuits)
+ (modules helper_circuits board_top clk_div second_pulse)
+ (flags (:standard -w -27-57-33-34-35-40-63-47-26))
+ (preprocess
+  (pps ppx_hardcaml ppx_jane))
+)
