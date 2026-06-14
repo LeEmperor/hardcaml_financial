@@ -1,10 +1,16 @@
+(*
+  Module: Uart_tx
+
+  TX side of the UART transceiver.
+*)
+
 open! Core
 open! Hardcaml
 open! Signal
 open! Always
 
 let () =
-  Stdio.print_endline "=== Imported UART TX Top ===";
+  Stdio.print_endline "=== Imported UART TX ===";
 
 module I = struct
   type 'a t = {
