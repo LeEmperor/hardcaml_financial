@@ -23,7 +23,7 @@ module Cme_feed_parser = struct
   module O = struct
     type 'a t =
       {
-        data : 'a [@bits 512];
+        data_out : 'a [@bits 512];
         slave_ready : 'a;
       }
     [@@deriving hardcaml]
@@ -36,9 +36,9 @@ module Cme_feed_parser = struct
 
 
     (* resulting thingy *)
-    { 
-      O.data = Signal.vdd;
-      O.slave_ready     = Signal.vdd;
+    {
+      O.data_out    = Signal.zero 512;
+      O.slave_ready = Signal.vdd;
     }
 
 end

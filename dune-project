@@ -6,6 +6,7 @@
 
 (package
  (name feed_parser_of_hardcaml)
+ (allow_empty)
  (synopsis "FPGA market-data feed parsers (CME, NASDAQ, ...) written in Hardcaml")
  (depends
   (ocaml (>= 5.1))
