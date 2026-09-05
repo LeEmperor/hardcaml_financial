@@ -6,7 +6,10 @@
 
 open! Hardcaml
 
-(* this encoded the *)
+(* this encoded the extra tags that an event may have attached to it;
+
+   we encode the width of the field itself into it's owning module; how staticy
+*)
 module Event_kind = struct
   let width = 2
   let mbp_update = 0
@@ -14,6 +17,7 @@ module Event_kind = struct
   let diagnostic = 2
 end
 
+(* John Error Code *)
 module Diagnostic_code = struct
   let width = 8
   let none = 0
@@ -135,6 +139,8 @@ end
 
 module Message_item_kind = struct
   let width = 2
+  (* this is the size of the tag field; aka the "kind" tag is of Message_item_kind.width *)
+
   let start = 0
   let body = 1
   let diagnostic = 2

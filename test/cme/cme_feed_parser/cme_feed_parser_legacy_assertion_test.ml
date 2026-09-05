@@ -1,7 +1,9 @@
-(* Module: "test_cme_feed_parser.ml" *)
+(* Module: "cme_feed_parser_legacy_assertion_test.ml" *)
 (* Executable Phase 0 contract checks. These validate an inactive skeleton, not packet
    parsing, sequencing, FIFO behavior, or throughput.
 *)
+
+(* Tags: [{ "DEPRECATED" ; "ASSERTION_TEST" }] *)
 
 open! Core
 open! Hardcaml

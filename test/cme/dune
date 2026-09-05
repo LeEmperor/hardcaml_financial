@@ -1,6 +1,10 @@
-(tests
- (names test_cme_feed_parser)
+(library
+ (name stream_test_support)
+ (modules stream_fixture)
  (libraries core hardcaml cme_of_hardcaml)
- (preprocess
-  (pps ppx_hardcaml ppx_jane))
- (flags (:standard -w -27-57-33-34-35-40-63-47-26)))
+ (preprocess (pps ppx_hardcaml ppx_jane)))
+
+(executable
+ (name generate_stream_fixture)
+ (modules generate_stream_fixture)
+ (libraries core hardcaml cme_of_hardcaml stream_test_support))
