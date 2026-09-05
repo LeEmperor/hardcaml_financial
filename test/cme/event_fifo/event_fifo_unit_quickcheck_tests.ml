@@ -1,5 +1,8 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "event_fifo_unit_quickcheck_tests.ml" *)
 (* Complete event-word scoreboard, capacities including non-powers of two. *)
+
 open! Core
 open Event_fifo_testbench
 

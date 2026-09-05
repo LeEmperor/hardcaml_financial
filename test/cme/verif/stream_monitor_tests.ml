@@ -1,5 +1,8 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "stream_monitor_tests.ml" *)
 (* Active negative tests for the shared stream contract monitor. *)
+
 open! Core
 open! Hardcaml
 module F = Stream_test_support.Stream_fixture

@@ -1,7 +1,10 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "report_support.ml" *)
 (* Adapted from hardcaml_networking/synthesis/xilinx_reports.ml at
    4109a4a6540e3c328e431cfa58a6e7526fa9733f. Standard reports and freshness checks prevent
    an upstream Vivado failure from appearing to be successful evidence. *)
+
 open! Core
 open! Async
 module Reports = Hardcaml_xilinx_reports

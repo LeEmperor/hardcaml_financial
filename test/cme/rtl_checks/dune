@@ -1,15 +1,25 @@
-; Explicit alias: these tools are never invoked by runtest.
+; University of Florida
+; Author: Bohdan Purtell
+; Module: "dune"
+; OCaml RTL generation and optional Yosys hierarchy/Icarus elaboration checks.
+
+; RTL generation is OCaml-only; external checks belong solely to the explicit alias.
+(rule
+ (targets
+  cme_ingress_fifo.v
+  cme_event_fifo.v
+  cme_byte_aligner.v
+  cme_stream_fixture.v
+  cme_mdp3_feed_parser.v)
+ (action (run %{exe:../generate_stream_fixture.exe} .)))
+
 (rule
  (alias rtl-check)
- (targets
-  cme_ingress_fifo.v cme_ingress_fifo.yosys.log
-  cme_event_fifo.v cme_event_fifo.yosys.log
-  cme_byte_aligner.v cme_byte_aligner.yosys.log
-  cme_stream_fixture.v cme_stream_fixture.yosys.log
-  cme_mdp3_feed_parser.v cme_mdp3_feed_parser.yosys.log
- )
- (deps ../../../scripts/check-rtl.sh)
- (action
-  (progn
-   (run %{exe:../generate_stream_fixture.exe} .)
-   (run bash %{dep:../../../scripts/check-rtl.sh} .))))
+ (deps
+  ../../../scripts/check-rtl.sh
+  cme_ingress_fifo.v
+  cme_event_fifo.v
+  cme_byte_aligner.v
+  cme_stream_fixture.v
+  cme_mdp3_feed_parser.v)
+ (action (run bash %{dep:../../../scripts/check-rtl.sh} .)))

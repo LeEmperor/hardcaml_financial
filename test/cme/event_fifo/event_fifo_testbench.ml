@@ -1,6 +1,9 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "event_fifo_testbench.ml" *)
 (* Step transfers sampled before the edge, disable-hold checked after the edge. A software
    queue monitors complete packed events, with bounded draining. *)
+
 open! Core
 open! Hardcaml
 open! Cme_of_hardcaml

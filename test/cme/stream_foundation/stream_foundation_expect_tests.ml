@@ -1,5 +1,8 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "stream_foundation_expect_tests.ml" *)
 (* Small reviewed traces reuse the unit-test scenario. *)
+
 open! Core
 open Stream_foundation_testbench
 

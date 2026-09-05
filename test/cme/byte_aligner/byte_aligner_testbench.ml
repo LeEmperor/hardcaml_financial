@@ -1,6 +1,9 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "byte_aligner_testbench.ml" *)
 (* Peek/consume Step driver. Ready/valid and windows use before_edge; held state uses
    after_edge. Independent accepted-byte queue never borrows a following packet. *)
+
 open! Core
 open! Hardcaml
 open! Cme_of_hardcaml

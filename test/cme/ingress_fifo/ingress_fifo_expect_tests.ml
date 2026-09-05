@@ -1,5 +1,8 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "ingress_fifo_expect_tests.ml" *)
 (* Small reviewed traces reuse the unit-test scenario. *)
+
 open! Core
 open Ingress_fifo_testbench
 

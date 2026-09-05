@@ -1,3 +1,5 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "cme_types.ml" *)
 (* Direction-neutral parser contracts. Event payloads pack in declaration order, first
    field at the least significant bits. Schema-dependent widths are provisional containers

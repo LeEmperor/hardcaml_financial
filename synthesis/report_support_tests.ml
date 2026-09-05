@@ -1,5 +1,8 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "report_support_tests.ml" *)
 (* Failure-path regression tests run without Vivado or a license. *)
+
 open! Core
 open Report_support
 

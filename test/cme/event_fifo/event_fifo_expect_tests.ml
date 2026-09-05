@@ -1,5 +1,8 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "event_fifo_expect_tests.ml" *)
 (* One-entry FIFO: accepted replacement, enable pause, reset cancellation. *)
+
 open! Core
 open Event_fifo_testbench
 

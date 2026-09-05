@@ -1,3 +1,5 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "elastic_fifo.ml" *)
 (* Packed ready/valid storage with exact positive capacity and full-rate replacement. The
    showahead register counts toward capacity. Reset overrides the shared enable.

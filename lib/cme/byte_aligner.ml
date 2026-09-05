@@ -1,3 +1,5 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "byte_aligner.ml" *)
 (* Two stored beats expose a low-byte-first peek window. An accepted consume retires 0..8
    bytes; filling a free slot may extend the window without consuming anything. A

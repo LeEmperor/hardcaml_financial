@@ -1,5 +1,8 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "cme_feed_parser_expect_tests.ml" *)
 (* Compact Phase 0 golden shares the exhaustive scenario with assertions. *)
+
 open! Core
 open Cme_feed_parser_testbench
 

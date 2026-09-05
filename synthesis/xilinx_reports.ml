@@ -1,6 +1,9 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "xilinx_reports.ml" *)
 (* Explicit device reporting; without -run only Verilog/XDC/Tcl are generated. FIFO
    capacities are fixed here and printed with every invocation. *)
+
 open! Core
 open! Async
 open Cme_of_hardcaml

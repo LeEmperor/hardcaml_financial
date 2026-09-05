@@ -1,5 +1,8 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "stream_foundation_testbench.ml" *)
 (* Shared Step scenarios and typed transfer observations. *)
+
 open! Core
 module Scenarios = Cme_verif.Stream_scenarios
 module Observation = Scenarios.Observation

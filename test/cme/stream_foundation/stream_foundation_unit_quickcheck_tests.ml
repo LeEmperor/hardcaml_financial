@@ -1,5 +1,8 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "stream_foundation_unit_quickcheck_tests.ml" *)
 (* Unit and reproducible generated transport properties, consuming plain observations. *)
+
 open! Core
 open Stream_foundation_testbench
 

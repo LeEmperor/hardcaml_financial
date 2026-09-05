@@ -1,3 +1,5 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "cme_config.ml" *)
 (* Elaboration-time storage parameters for the portable core. Phase 0 validates these
    parameters but does not instantiate storage yet.

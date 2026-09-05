@@ -1,3 +1,5 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "stream_fixture.ml" *)
 (* Byte-string sources, executable stream contract assertions, and a transport-only
    fixture. No fixture payload uses the public parser's normalized-event interface.

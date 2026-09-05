@@ -1,5 +1,8 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "generate_stream_fixture.ml" *)
 (* Full hierarchy exports for the optional Yosys hierarchy and Icarus elaboration checks. *)
+
 open! Core
 open! Hardcaml
 open! Cme_of_hardcaml

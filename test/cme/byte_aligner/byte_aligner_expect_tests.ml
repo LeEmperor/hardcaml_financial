@@ -1,5 +1,8 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "byte_aligner_expect_tests.ml" *)
 (* Compact peek/consume trace, with assertions in the unit suite. *)
+
 open! Core
 open Byte_aligner_testbench
 

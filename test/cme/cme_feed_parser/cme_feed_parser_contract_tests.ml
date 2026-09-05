@@ -1,5 +1,8 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "cme_feed_parser_contract_tests.ml" *)
 (* Structural and provisional ABI checks; no cycle simulation is needed here. *)
+
 open! Core
 open! Hardcaml
 open! Cme_of_hardcaml

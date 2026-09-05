@@ -1,3 +1,5 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "cme_feed_parser_legacy_assertion_test.ml" *)
 (* Executable Phase 0 contract checks. These validate an inactive skeleton, not packet
    parsing, sequencing, FIFO behavior, or throughput.

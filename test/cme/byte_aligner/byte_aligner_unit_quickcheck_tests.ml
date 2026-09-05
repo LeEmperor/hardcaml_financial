@@ -1,5 +1,8 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "byte_aligner_unit_quickcheck_tests.ml" *)
 (* Coverage requirements are assertions over plain typed scenario observations. *)
+
 open! Core
 open Byte_aligner_testbench
 

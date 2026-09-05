@@ -1,7 +1,10 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "stream_scenarios.ml" *)
 (* Shared ingress and integration Step driver, protocol monitors, and queue scoreboard.
    Transfers use before_edge; state-hold checks use after_edge. Each run owns its seed.
    The byte-string oracle is independent of RTL byte extraction. *)
+
 open! Core
 open! Hardcaml
 open! Cme_of_hardcaml

@@ -1,3 +1,5 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "ingress_fifo.ml" *)
 (* UDP beat elasticity. Timestamp is sampled with accepted first beats and stored as zero
    on all other entries. No packet context is shared between buffered packets.

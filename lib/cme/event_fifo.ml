@@ -1,3 +1,5 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "event_fifo.ml" *)
 (* Reusable ordered storage for packed normalized events. *)
 

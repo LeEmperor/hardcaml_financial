@@ -1,5 +1,8 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "cme_feed_parser_testbench.ml" *)
 (* Inactive Phase 0 top only. Transfers use before_edge, state observations after_edge. *)
+
 open! Core
 open! Hardcaml
 open! Cme_of_hardcaml

@@ -1,3 +1,5 @@
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
 (* Module: "stream_foundation_legacy_assertion_test.ml" *)
 (* Phase 1 byte, framing, context, handshake, reset, and sustained-rate scoreboards. *)
 
