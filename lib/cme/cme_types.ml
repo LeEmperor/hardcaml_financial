@@ -139,6 +139,10 @@ module Packet_item = struct
   [@@deriving hardcaml]
 end
 
+let packet_item_width =
+  List.fold_left ( + ) 0 (Packet_item.to_list Packet_item.port_widths)
+;;
+
 module Message_item_kind = struct
   let width = 2
   (* this is the size of the tag field; aka the "kind" tag is of Message_item_kind.width *)
@@ -163,3 +167,7 @@ module Message_item = struct
     }
   [@@deriving hardcaml]
 end
+
+let message_item_width =
+  List.fold_left ( + ) 0 (Message_item.to_list Message_item.port_widths)
+;;

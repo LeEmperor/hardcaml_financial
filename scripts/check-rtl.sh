@@ -16,7 +16,7 @@ for tool in yosys iverilog; do
     exit 1
   fi
 done
-for top in cme_ingress_fifo cme_event_fifo cme_byte_aligner cme_stream_fixture cme_mdp3_feed_parser; do
+for top in cme_ingress_fifo cme_event_fifo cme_byte_aligner cme_stream_fixture cme_packet_pipeline cme_sbe_message_iterator cme_message_pipeline cme_event_orderer cme_mdp3_feed_parser; do
   iverilog -g2012 -tnull -s "$top" "$rtl_dir/$top.v"
   if ! yosys -Q -T -p "read_verilog \"$rtl_dir/$top.v\"; hierarchy -check -top $top" > "$rtl_dir/$top.yosys.log"; then
     cat "$rtl_dir/$top.yosys.log" >&2

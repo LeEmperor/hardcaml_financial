@@ -1,13 +1,16 @@
 (* University of Florida *)
 (* Author: Bohdan Purtell *)
 (* Module: "byte_aligner.ml" *)
-(* Two stored beats expose a low-byte-first peek window. An accepted consume retires 0..8
-   bytes; filling a free slot may extend the window without consuming anything. A
-   following packet can occupy slot 1 but is never visible in the current window.
+(* Two stored beats expose a low-byte-first peek window
+
+   An accepted consume retires 0..8 bytes; filling a free slot may extend the window
+   without consuming anything
+
+   A following packet can occupy slot 1 but is never visible in the current window
 *)
 
 open! Hardcaml
-open Signal
+open! Signal
 
 module I = struct
   type 'a t =
@@ -46,49 +49,84 @@ module O = struct
   [@@deriving hardcaml]
 end
 
+[@@@ocamlformat "disable"]
+(*
+   0000_0001 -> 1
+   0001_0001 -> 5
+
+  prio encoder pattern; timing pending
+*)
 let byte_count keep =
-  (* Legal masks are nonzero contiguous low lanes; the testbench checks that contract. *)
-  List.init 8 (fun n -> mux2 (bit keep ~pos:n) (of_int_trunc ~width:4 (n + 1)) (zero 4))
+  (* Legal masks are nonzero contiguous low lanes; the testbench checks this contract *)
+  List.init 8 (fun n ->
+      mux2
+        (bit keep ~pos:n) (* is the bit in the keep mask true? *)
+
+        (* yes - add to n *)
+        (of_int_trunc ~width:4 (n + 1)) (* forms [1; 2; 3; 4; 5; 6; 7; 8] *)
+        (zero 4)
+    )
+
   |> List.fold_left (fun count next -> mux2 (next <>:. 0) next count) (zero 4)
 ;;
 
 let mask_data data keep =
-  List.init 8 (fun n ->
+  List.init 8 (fun n -> (* 8 items of the byte slicer out of the data, smashed back together via concat_lsb *)
     mux2 (bit keep ~pos:n) (select data ~high:((n * 8) + 7) ~low:(n * 8)) (zero 8))
   |> concat_lsb
 ;;
 
 let create (_scope : Scope.t) (i : _ I.t) =
+  (* spec *)
   let spec = Reg_spec.create ~clock:i.clock_i ~clear:i.reset_i () in
+
+  (* en really ought to be removed; will see if there are timing implications *)
   let active = i.en_i &: ~:(i.reset_i) in
+
+  (* local aliases *)
   let module B = Cme_types.Ingress_beat in
+
+  (* compose the input signal end*)
   let input =
     B.Of_signal.pack
       { beat =
-          { data = mask_data i.data_i i.keep_i
-          ; keep = i.keep_i
-          ; first = i.first_i
-          ; last = i.last_i
+          { data    = mask_data i.data_i i.keep_i
+          ; keep    = i.keep_i
+          ; first   = i.first_i
+          ; last    = i.last_i
           }
-      ; ingress_timestamp = mux2 i.first_i i.ingress_timestamp_i (zero 64)
+      ; ingress_timestamp =
+          mux2
+            (* are we the first? *)
+            i.first_i
+
+            (* timestamp *)
+            i.ingress_timestamp_i
+
+            (* zilch *)
+            (zero 64)
       }
   in
-  let slot_width = width input in
-  let slot0, slot1 = wire slot_width, wire slot_width in
-  let count = wire 2 in
-  let offset = wire 3 in
+
+  let slot_width      = Signal.width input in
+  let slot0, slot1    = Signal.wire slot_width, Signal.wire slot_width in
+  let count           = Signal.wire 2 in
+  let offset          = Signal.wire 3 in
   let head, tail = B.Of_signal.unpack slot0, B.Of_signal.unpack slot1 in
   let occupied = count <>:. 0 in
   let join_tail = count ==:. 2 &: ~:(head.beat.last) in
   let remaining =
-    uresize (byte_count head.beat.keep) ~width:5 -: uresize offset ~width:5
+    uresize (byte_count head.beat.keep) ~width:5 -:
+    (uresize offset ~width:5)
   in
+
   let available =
     mux2
       occupied
       (remaining +: mux2 join_tail (uresize (byte_count tail.beat.keep) ~width:5) (zero 5))
       (zero 5)
   in
+
   let boundary = occupied &: (head.beat.last |: (join_tail &: tail.beat.last)) in
   let valid = active &: occupied in
   let requested = uresize i.consume_count_i ~width:5 in
@@ -122,7 +160,16 @@ let create (_scope : Scope.t) (i : _ I.t) =
   let first = occupied &: head.beat.first &: (offset ==:. 0) in
   let timestamp = reg spec ~enable:(consume &: first) head.ingress_timestamp in
   let window = concat_msb [ mux2 join_tail tail.beat.data (zero 64); head.beat.data ] in
-  let aligned = mux offset (List.init 8 (fun n -> srl window ~by:(n * 8))) in
+  let aligned =
+    (* 8-lane candidate creation, indexed into by the offset calculated previously *)
+    mux
+      offset
+      (List.init 8 (fun n ->
+           srl window ~by:(n * 8)
+                   )
+      )
+  in
+
   { O.ready_o = ready
   ; valid_o = valid
   ; data_o = mux2 occupied aligned (zero 128)
@@ -133,7 +180,7 @@ let create (_scope : Scope.t) (i : _ I.t) =
   ; packet_byte_offset_o = packet_offset
   ; consume_ready_o = consume_ready
   }
-;;
+[@@@ocamlformat "enable"]
 
 let hierarchical ?instance scope i =
   let module H = Hierarchy.In_scope (I) (O) in

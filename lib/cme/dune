@@ -1,3 +1,8 @@
+; University of Florida
+; Author: Bohdan Purtell
+; Module: "dune"
+; Portable CME RTL library.
+
 (library
  (name cme_of_hardcaml)
  (libraries core hardcaml hardcaml_circuits)
