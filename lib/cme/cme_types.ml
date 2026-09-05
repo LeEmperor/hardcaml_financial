@@ -6,6 +6,7 @@
 
 open! Hardcaml
 
+(* this encoded the *)
 module Event_kind = struct
   let width = 2
   let mbp_update = 0
@@ -48,18 +49,18 @@ end
 module Packet_context = struct
   type 'a t =
     { ingress_timestamp : 'a [@bits 64]
-    ; source_id : 'a
+    ; source_id : 'a (* which parser or session has given us this *)
     ; packet_seq : 'a [@bits 32]
-    ; sending_time : 'a [@bits 64]
-    ; packet_header_present : 'a
-    ; channel_valid : 'a
+    ; sending_time : 'a [@bits 64] (* encoded in the 12B of MDP3 Packet Header *)
+    ; packet_header_present : 'a (* metadata *)
+    ; channel_valid : 'a (* extra sideband *)
     }
   [@@deriving hardcaml]
 end
 
 module Message_context = struct
   type 'a t =
-    { msg_size : 'a [@bits 16]
+    { msg_size : 'a [@bits 16] (* standard MDP3 Message Items (Msg header contents) *)
     ; block_length : 'a [@bits 16]
     ; template_id : 'a [@bits 16]
     ; schema_id : 'a [@bits 16]
@@ -72,6 +73,11 @@ module Message_context = struct
   [@@deriving hardcaml]
 end
 
+(* this is the main composed item that is emitted out for normalized book existence kind
+   represents some extra metadata about a messsage -> for example this beat being handed
+   to downstream has SBE header inside of it, or it has the last of a given UDP payload
+   inside of it
+*)
 module Event = struct
   type 'a t =
     { kind : 'a [@bits Event_kind.width]
@@ -90,7 +96,7 @@ module Event = struct
     ; price_level : 'a [@bits 8]
     ; update_action : 'a [@bits 8]
     ; entry_type : 'a [@bits 8]
-    ; tradeable_size : 'a [@bits 32]
+    ; tradeable_size : 'a [@bits 32] (* extras for later *)
     ; tradeable_size_is_null : 'a
     ; match_event_indicator : 'a [@bits 8]
     ; message_last : 'a
@@ -113,8 +119,9 @@ end
 
 module Packet_item = struct
   (* One ordered ready/valid channel. Start owns context and the first body beat; body
-     carries subsequent header-stripped bytes; diagnostic carries an Event. An empty start
-     has no beat and completely represents a header-only packet.
+     carries subsequent header-stripped bytes; diagnostic carries an Event.
+
+     An empty start has no beat and completely represents a header-only packet.
   *)
   type 'a t =
     { kind : 'a [@bits Packet_item_kind.width]
