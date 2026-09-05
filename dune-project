@@ -4,6 +4,9 @@
 
 (generate_opam_files true)
 
+(formatting
+ (enabled_for ocaml))
+
 (package
  (name feed_parser_of_hardcaml)
  (allow_empty)
@@ -12,6 +15,8 @@
   (ocaml (>= 5.1))
   (dune (>= 3.17))
   hardcaml
+  hardcaml_circuits
   ppx_hardcaml
+  ppx_jane
   hardcaml_waveterm
   core))

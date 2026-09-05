@@ -6,7 +6,9 @@ depends: [
   "ocaml" {>= "5.1"}
   "dune" {>= "3.17" & >= "3.17"}
   "hardcaml"
+  "hardcaml_circuits"
   "ppx_hardcaml"
+  "ppx_jane"
   "hardcaml_waveterm"
   "core"
   "odoc" {with-doc}

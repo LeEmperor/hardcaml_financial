@@ -1,0 +1,150 @@
+(* Module: "cme_types.ml" *)
+(* Direction-neutral parser contracts. Event payloads pack in declaration order, first
+   field at the least significant bits. Schema-dependent widths are provisional containers
+   until phase 4; see docs/phase0_contracts.md.
+*)
+
+open! Hardcaml
+
+module Event_kind = struct
+  let width = 2
+  let mbp_update = 0
+  let end_of_event = 1
+  let diagnostic = 2
+end
+
+module Diagnostic_code = struct
+  let width = 8
+  let none = 0
+  let sequence_gap = 1
+  let duplicate_or_late = 2
+  let truncated_packet_header = 3
+  let invalid_message_size = 4
+  let message_beyond_packet = 5
+  let unsupported_template = 6
+  let schema_incompatibility = 7
+  let invalid_enum = 8
+  let internal_overflow = 9
+end
+
+module Beat = struct
+  type 'a t =
+    { data : 'a [@bits 64]
+    ; keep : 'a [@bits 8]
+    ; first : 'a
+    ; last : 'a
+    }
+  [@@deriving hardcaml]
+end
+
+module Ingress_beat = struct
+  type 'a t =
+    { beat : 'a Beat.t
+    ; ingress_timestamp : 'a [@bits 64]
+    }
+  [@@deriving hardcaml]
+end
+
+module Packet_context = struct
+  type 'a t =
+    { ingress_timestamp : 'a [@bits 64]
+    ; source_id : 'a
+    ; packet_seq : 'a [@bits 32]
+    ; sending_time : 'a [@bits 64]
+    ; packet_header_present : 'a
+    ; channel_valid : 'a
+    }
+  [@@deriving hardcaml]
+end
+
+module Message_context = struct
+  type 'a t =
+    { msg_size : 'a [@bits 16]
+    ; block_length : 'a [@bits 16]
+    ; template_id : 'a [@bits 16]
+    ; schema_id : 'a [@bits 16]
+    ; schema_version : 'a [@bits 16]
+    ; message_header_present : 'a
+    ; transaction_time : 'a [@bits 64]
+    ; transaction_time_present : 'a
+    ; packet_byte_offset : 'a [@bits 16]
+    }
+  [@@deriving hardcaml]
+end
+
+module Event = struct
+  type 'a t =
+    { kind : 'a [@bits Event_kind.width]
+    ; packet : 'a Packet_context.t
+    ; message : 'a Message_context.t
+    ; entry_index : 'a [@bits 16]
+    ; entry_count : 'a [@bits 16]
+    ; security_id : 'a [@bits 32]
+    ; rpt_seq : 'a [@bits 32]
+    ; price_mantissa : 'a [@bits 64]
+    ; price_is_null : 'a
+    ; entry_size : 'a [@bits 32]
+    ; entry_size_is_null : 'a
+    ; number_of_orders : 'a [@bits 32]
+    ; number_of_orders_is_null : 'a
+    ; price_level : 'a [@bits 8]
+    ; update_action : 'a [@bits 8]
+    ; entry_type : 'a [@bits 8]
+    ; tradeable_size : 'a [@bits 32]
+    ; tradeable_size_is_null : 'a
+    ; match_event_indicator : 'a [@bits 8]
+    ; message_last : 'a
+    ; diagnostic_code : 'a [@bits Diagnostic_code.width]
+    ; expected_seq : 'a [@bits 32]
+    ; expected_seq_present : 'a
+    ; diagnostic_byte_offset : 'a [@bits 16]
+    }
+  [@@deriving hardcaml]
+
+  let width = List.fold_left ( + ) 0 (to_list port_widths)
+end
+
+module Packet_item_kind = struct
+  let width = 2
+  let start = 0
+  let body = 1
+  let diagnostic = 2
+end
+
+module Packet_item = struct
+  (* One ordered ready/valid channel. Start owns context and the first body beat; body
+     carries subsequent header-stripped bytes; diagnostic carries an Event. An empty start
+     has no beat and completely represents a header-only packet.
+  *)
+  type 'a t =
+    { kind : 'a [@bits Packet_item_kind.width]
+    ; context : 'a Packet_context.t
+    ; body_empty : 'a
+    ; beat : 'a Beat.t
+    ; diagnostic : 'a Event.t
+    }
+  [@@deriving hardcaml]
+end
+
+module Message_item_kind = struct
+  let width = 2
+  let start = 0
+  let body = 1
+  let diagnostic = 2
+end
+
+module Message_item = struct
+  (* As for Packet_item, with context alongside the first body beat and the ten-byte
+     message prefix removed. Body beats stop at MsgSize, even when the UDP packet
+     continues in the same input beat.
+  *)
+  type 'a t =
+    { kind : 'a [@bits Message_item_kind.width]
+    ; packet : 'a Packet_context.t
+    ; message : 'a Message_context.t
+    ; body_empty : 'a
+    ; beat : 'a Beat.t
+    ; diagnostic : 'a Event.t
+    }
+  [@@deriving hardcaml]
+end
