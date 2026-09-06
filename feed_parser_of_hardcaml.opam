@@ -16,6 +16,7 @@ depends: [
   "ppx_hardcaml"
   "ppx_jane"
   "hardcaml_waveterm"
+  "xmlm"
   "core"
   "odoc" {with-doc}
 ]

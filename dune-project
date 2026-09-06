@@ -25,4 +25,5 @@
   ppx_hardcaml
   ppx_jane
   hardcaml_waveterm
+  xmlm
   core))

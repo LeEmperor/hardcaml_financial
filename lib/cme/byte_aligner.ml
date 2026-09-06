@@ -52,7 +52,7 @@ end
 [@@@ocamlformat "disable"]
 (*
    0000_0001 -> 1
-   0001_0001 -> 5
+   0001_0101 -> 5
 
   prio encoder pattern; timing pending
 *)
@@ -86,16 +86,20 @@ let create (_scope : Scope.t) (i : _ I.t) =
   (* local aliases *)
   let module B = Cme_types.Ingress_beat in
 
-  (* compose the input signal end*)
+  (* compose the input *)
+  (* this is basically just composing many structs together in SV *)
   let input =
+    (* pack the entire record into a flat vector *)
     B.Of_signal.pack
+
+      (* structured record of Signal.t fields *)
       { beat =
           { data    = mask_data i.data_i i.keep_i
           ; keep    = i.keep_i
           ; first   = i.first_i
           ; last    = i.last_i
           }
-      ; ingress_timestamp =
+      ; ingress_timestamp = (* later on more formatted timestamping may be used; Timestamp.t may be necessary *)
           mux2
             (* are we the first? *)
             i.first_i
@@ -108,40 +112,204 @@ let create (_scope : Scope.t) (i : _ I.t) =
       }
   in
 
+  (* a single pulse contains the Beat.t item, as well as a timestamp;
+     we need storage for (2) of these at a time to shift in a new one, and hold un-consumed residue from n-1
+  *)
   let slot_width      = Signal.width input in
   let slot0, slot1    = Signal.wire slot_width, Signal.wire slot_width in
-  let count           = Signal.wire 2 in
+
+  (* number of occupied slots in the "accumulator" *)
+  (* this is the main stateful item;
+      00 - no occupied slots
+      01 - head occupied (slot0)
+      10 - head and tail occupied (slot0 and slot1 respectiveuly)
+*)
+  let occupied_slot_count           = Signal.wire 2 in
+
+  (* number of bytes already consumed from the header beat *)
   let offset          = Signal.wire 3 in
-  let head, tail = B.Of_signal.unpack slot0, B.Of_signal.unpack slot1 in
-  let occupied = count <>:. 0 in
-  let join_tail = count ==:. 2 &: ~:(head.beat.last) in
+
+  (* in terse, this "re-names" the fields present in the Signal construction;
+     enables us to do things like head.beat.data, and having field-named struct
+  *)
+  let head, tail =
+    B.Of_signal.unpack slot0,
+    B.Of_signal.unpack slot1
+  in
+
+  (* are any of the slots used?  *)
+  (* foramlly provable that occupied_slot_count cannot be 11? *)
+  let occupied  = occupied_slot_count <>:. 0 in
+
+  (* only when the head is NOT the last, and both slots are occupied can we expand the window *)
+  let join_tail = occupied_slot_count ==:. 2 &:
+                  ~:(head.beat.last) in
+
+  (* figures out the valid bytes from head that weren't consumed in a given cycle *)
   let remaining =
     uresize (byte_count head.beat.keep) ~width:5 -:
     (uresize offset ~width:5)
   in
 
-  let available =
+  (*
+      consider example:
+        head.keep = 00001_1111 -> byte_count = 5
+        offset = 2
+        remaining = 3 (composed from byte_count - offset)
+
+
+
+    if (~occupied) then
+      0
+    else if (join_tail) then
+      remaining_head_bytes + valid_tail_bytes
+    else
+      remaining_head_bytes
+*)
+
+  (* how much of the tail is avilable (as a count), but only if we need the tail
+      this adds an extra layer of checking on join_tail, which may have timing implications
+  *)
+  let tail_available =
     mux2
+        (* tail to be used? *)
+        join_tail
+
+        (* yes - add valid_tail_bytes *)
+        (uresize (byte_count tail.beat.keep) ~width:5)
+
+        (* no - add nothing *)
+        (zero 5)
+  in
+
+  let stored_available = remaining +: tail_available in
+
+  (* 5b combinational count of how many consecutive unread bytes, starting at
+      data_o byte lane 0, currently belong to this packet and are valid to consume?
+
+
+    describes the aligner's currently registered state
+
+
+
+    example:
+
+      beat 1 - head has 8 valid bytes = head.keep = 0b1111_1111, offset happens to be 3
+
+        byte_count(head.keep) = 8
+        remaining = 8 - 3 = 5
+
+
+        (5) lowest bytes in data_o are "valid"
+
+
+    example - residue of same packet, different beat
+        head remaining = 5 (head.keep = 0b0001_0000)
+        byte_count(head.keep) = 5
+        byte_count(tail.keep) = 6
+          now join_tail = 1
+
+      and thus available = 5 + 6
+
+
+    in the case of both slots occupied, and the head being marked last, then we reasonably know
+        (count ==. 2) &: (head.beat.last) => boundary area somewhat (notably join_tail is based on ~head.beat.last)
+    the tail to be the first beat of the next packet
+      purposely discludes the tail from processing across this boundary
+
+  *)
+  let (available : t) = (* a count of *)
+    mux2
+
+      (* is there a head beat stored? *)
       occupied
-      (remaining +: mux2 join_tail (uresize (byte_count tail.beat.keep) ~width:5) (zero 5))
+
+      (* yes - use the stored = unread bytes in head + valid bytes in tail, IF the tail can be joined *)
+      stored_available
+
+      (* no - zero on it *)
       (zero 5)
   in
 
-  let boundary = occupied &: (head.beat.last |: (join_tail &: tail.beat.last)) in
-  let valid = active &: occupied in
-  let requested = uresize i.consume_count_i ~width:5 in
-  let consume_ready = valid &: (requested <=:. 8) &: (requested <=: available) in
-  let consume = consume_ready &: i.consume_valid_i &: (requested <>:. 0) in
+  let boundary =
+    (* join_Tail, head and tail last might be needed for another compsition; will figure later *)
+    occupied &:
+    (head.beat.last |: (join_tail &: tail.beat.last)) (* last head and tail and join_tail and occupied *)
+  in
+
+  (* valid and things present *)
+  let valid       = active &: (occupied : t) in
+  let requested   = uresize i.consume_count_i ~width:5 in
+
+  let consume_ready =
+    valid &:
+    (requested <=:. 8) &:
+    (requested <=: available)
+  in
+
+  let consume = consume_ready &:
+                i.consume_valid_i &:
+                (requested <>:. 0)
+  in
+
+  (* pop the head only if we're to consume, and the requested amount if geq than the remainging *)
   let pop_head = consume &: (requested >=: remaining) in
+
+  (* requires perfect alignment on requested and available amounts *)
   let pop_tail = pop_head &: join_tail &: (requested ==: available) in
-  let pops = mux2 pop_tail (of_int_trunc ~width:2 2) (uresize pop_head ~width:2) in
-  let retained = count -: pops in
+
+  (* number of things we're grabbing out *)
+  let pops =
+    mux2
+      pop_tail
+      (of_int_trunc ~width:2 2)
+      (uresize pop_head ~width:2)
+  in
+
+  (* how much we have - how much we're taking out leaves retinaed *)
+  let retained = occupied_slot_count -: pops in
+
+  (* en && ~rst && (retained < 2) *)
+  (* may be implications of checking retained < 2 here; might remove this *)
   let ready = active &: (retained <:. 2) in
+
+  (* handshake *)
   let push = ready &: i.valid_i in
-  count <-- reg spec ~enable:active (retained +: uresize push ~width:2);
-  let next_head = mux2 pop_head slot1 slot0 in
-  slot0 <-- reg spec ~enable:active (mux2 (push &: (retained ==:. 0)) input next_head);
-  slot1 <-- reg spec ~enable:active (mux2 (push &: (retained ==:. 1)) input slot1);
+
+  occupied_slot_count <-- reg spec ~enable:active (retained +: uresize push ~width:2);
+
+  let next_head =
+    mux2
+      (* if the head is being removed *)
+      pop_head
+      (* move slot 1 into next slot 0 *)
+      slot1
+      (* else - doesnt matter *)
+      slot0
+  in
+
+  let next_slot0 =
+    mux2
+      (* are we actually moving teh aligner along? *)
+      (push &: (retained ==:. 0))
+
+      (* yes - move the next beat being presented off the input vector in *)
+      input
+
+      (* *)
+      next_head
+  in
+
+  let next_slot1 =
+    mux2
+      (push &: (retained ==:. 1))
+      input
+      slot1
+  in
+
+  slot0 <-- Signal.reg spec ~enable:active next_slot0;
+  slot1 <-- Signal.reg spec ~enable:active next_slot1;
+
   let next_offset =
     mux2
       pop_tail
@@ -151,15 +319,49 @@ let create (_scope : Scope.t) (i : _ I.t) =
          (uresize (requested -: remaining) ~width:3)
          (offset +: uresize requested ~width:3))
   in
+
   offset <-- reg spec ~enable:consume next_offset;
+
+  (* consumer of boundary *)
   let packet_end = consume &: boundary &: (requested ==: available) in
+
+  (* assignment group for next offset of the packet *)
   let packet_offset =
-    reg_fb spec ~enable:consume ~width:16 ~f:(fun q ->
-      mux2 packet_end (zero 16) (q +: uresize requested ~width:16))
+    reg_fb spec
+      ~enable:consume
+      ~width:16
+      ~f:(fun q ->
+        mux2
+          (* if packet_end *)
+          packet_end
+          (* then perfect zero *)
+          (zero 16)
+
+          (* else requested offset for next *)
+          (q +: uresize requested ~width:16)
+      )
   in
+
   let first = occupied &: head.beat.first &: (offset ==:. 0) in
   let timestamp = reg spec ~enable:(consume &: first) head.ingress_timestamp in
-  let window = concat_msb [ mux2 join_tail tail.beat.data (zero 64); head.beat.data ] in
+
+  (* large combo vector of the head and tail -> only grabs the tail if the tail is necessary *)
+  let window =
+    concat_msb [
+        mux2
+            (* if join_tail -> residue has useful data in it *)
+            join_tail
+
+            (* tail data *)
+            tail.beat.data
+
+            (* no - concat zero *)
+            (zero 64)
+
+      ; head.beat.data (* the actual head beat data *)
+    ]
+  in
+
   let aligned =
     (* 8-lane candidate creation, indexed into by the offset calculated previously *)
     mux

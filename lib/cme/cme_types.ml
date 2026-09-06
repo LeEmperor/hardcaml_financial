@@ -2,8 +2,8 @@
 (* Author: Bohdan Purtell *)
 (* Module: "cme_types.ml" *)
 (* Direction-neutral parser contracts. Event payloads pack in declaration order, first
-   field at the least significant bits. Schema-dependent widths are provisional containers
-   until phase 4; see docs/phase0_contracts.md.
+   field at the least significant bits. Phase 4 confirms these field widths against CME
+   Production schema ID 1/version 13, template 46; see docs/phase4_schema.md.
 *)
 
 open! Hardcaml

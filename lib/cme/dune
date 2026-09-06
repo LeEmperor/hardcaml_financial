@@ -3,6 +3,19 @@
 ; Module: "dune"
 ; Portable CME RTL library.
 
+(rule
+ (targets generated_mbp_descriptor.ml)
+ (deps ../../docs/templates.xml)
+ (action
+  (run
+   %{exe:../schema/schema_descriptor_generator.exe}
+   -schema
+   %{dep:../../docs/templates.xml}
+   -template
+   MDIncrementalRefreshBook46
+   -output
+   %{targets})))
+
 (library
  (name cme_of_hardcaml)
  (libraries core hardcaml hardcaml_circuits)

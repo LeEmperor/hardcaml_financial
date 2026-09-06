@@ -9,6 +9,10 @@
   cme_ingress_fifo.v
   cme_event_fifo.v
   cme_byte_aligner.v
+  cme_packet_pipeline.v
+  cme_sbe_message_iterator.v
+  cme_message_pipeline.v
+  cme_event_orderer.v
   cme_stream_fixture.v
   cme_mdp3_feed_parser.v)
  (action (run %{exe:../generate_stream_fixture.exe} .)))
@@ -20,6 +24,10 @@
   cme_ingress_fifo.v
   cme_event_fifo.v
   cme_byte_aligner.v
+  cme_packet_pipeline.v
+  cme_sbe_message_iterator.v
+  cme_message_pipeline.v
+  cme_event_orderer.v
   cme_stream_fixture.v
   cme_mdp3_feed_parser.v)
  (action (run bash %{dep:../../../scripts/check-rtl.sh} .)))

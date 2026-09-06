@@ -57,5 +57,34 @@ let () =
     "cme_mdp3_feed_parser"
     (C.create_exn ~name:"cme_mdp3_feed_parser" (Cme_feed_parser.create scope))
     scope;
+  let scope = Scope.create ~flatten_design:false () in
+  let module C = Circuit.With_interface (Packet_pipeline.I) (Packet_pipeline.O) in
+  emit
+    "cme_packet_pipeline"
+    (C.create_exn ~name:"cme_packet_pipeline" (Packet_pipeline.create scope))
+    scope;
+  let scope = Scope.create ~flatten_design:false () in
+  let module C = Circuit.With_interface (Sbe_message_iterator.I) (Sbe_message_iterator.O)
+  in
+  emit
+    "cme_sbe_message_iterator"
+    (C.create_exn
+       ~name:"cme_sbe_message_iterator"
+       (Sbe_message_iterator.create ~supported_templates:[ 42 ] scope))
+    scope;
+  let scope = Scope.create ~flatten_design:false () in
+  let module C = Circuit.With_interface (Message_pipeline.I) (Message_pipeline.O) in
+  emit
+    "cme_message_pipeline"
+    (C.create_exn
+       ~name:"cme_message_pipeline"
+       (Message_pipeline.create ~supported_templates:[ 42 ] scope))
+    scope;
+  let scope = Scope.create ~flatten_design:false () in
+  let module C = Circuit.With_interface (Event_orderer.I) (Event_orderer.O) in
+  emit
+    "cme_event_orderer"
+    (C.create_exn ~name:"cme_event_orderer" (Event_orderer.create scope))
+    scope;
   ()
 ;;
