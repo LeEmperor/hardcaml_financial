@@ -8,6 +8,7 @@
  (modules
   validation_core_testbench
   validation_core_unit_quickcheck_tests
+  validation_core_heavy_traffic_tests
   validation_core_expect_tests)
  ; ppx_expect v0.18 preview needs the copied source directory as its root.
  (inline_tests

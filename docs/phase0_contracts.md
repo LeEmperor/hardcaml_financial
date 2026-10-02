@@ -1,14 +1,16 @@
 # Phase 0: portable parser contracts
 
 This is the implementation contract supplement to the [delivery plan](cme_mdp3_10g_parser_plan.md).
-The top is an **inactive skeleton**: `ready_o`, `control_ready_o`, and
+At the Phase 0 milestone the top was an **inactive skeleton**: `ready_o`, `control_ready_o`, and
 `event_valid_o` are always zero, and `event_o` is zero. It accepts no traffic or
 controls. The behavior below is the contract for subsequent phases, not a claim
-that parsing or sequence state exists today.
+that parsing or sequence state existed at that milestone. The public top is now
+active; [Phase 5](phase5_decoding.md) supersedes the historical inactivity and
+smoke-test status recorded here while preserving the public contracts.
 
 The standalone FIFOs, aligner, and transport fixture are now implemented; see
 [Phase 1](phase1_streaming.md) for their interface and verification. The public
-top's inactive behavior described here is unchanged. [Phase 2](phase2_packets.md)
+top remained inactive at that milestone. [Phase 2](phase2_packets.md)
 now implements packet extraction, sequencing, and the control fence in the
 separate canonical `Packet_pipeline` boundary.
 
@@ -101,11 +103,11 @@ there are no pretend functional child instances in the generated skeleton.
 | Module / file stem | Phase | Input → output and ownership |
 | --- | --- | --- |
 | `Cme_types` / `cme_types` | 0 | Direction-neutral records, event and diagnostic encodings |
-| `Cme_config` / `cme_config` | 0 | Positive FIFO depth parameters, defaults 64 beats / 16 events |
+| `Cme_config` / `cme_config` | 0 | Positive FIFO depth parameters, defaults 65 beats / 16 events |
 | `Cme_feed_parser` / `cme_feed_parser` | 0, integration later | Public boundary, control fence, composition |
 | `Ingress_fifo` / `ingress_fifo` | 1 | Public beat plus sampled timestamp → `Ingress_beat` |
 | `Event_fifo` / `event_fifo` | 1 | Ordered `Event` → packed public event stream |
-| `Byte_aligner` / `byte_aligner` | 1 | At most two beats → low-lane byte window and explicit consume count |
+| `Byte_aligner` / `byte_aligner` | 1 | At most two beats in the window (three stored) → low-lane byte window and explicit consume count |
 | `Packet_header` / `packet_header` | 2 | Ingress byte stream → header-stripped `Packet_item` |
 | `Single_feed_sequencer` / `single_feed_sequencer` | 2 | Pre-sequence `Packet_item` → canonical `Packet_item` |
 | `Sbe_message_iterator` / `sbe_message_iterator` | 3 | Canonical packets → bounded `Message_item` |
@@ -316,8 +318,9 @@ imply any correspondingly wide input datapath.
 ```
 
 The CME command writes ignored `cme_mdp3_feed_parser.v`, prominently marked
-inactive. The UART command writes `uart_test_top.v`; no argument retains the
-existing UART default. The active `test/cme/cme_feed_parser/` inline suite checks
+inactive. The UART command writes `uart_test_top.v`; invoking the generator without an
+explicit target reports the available subcommands and exits unsuccessfully. The active
+`test/cme/cme_feed_parser/` inline suite checks
 actual rendered RTL declarations, the provisional packed event ABI and reserved
 codes, configuration validation, and inactivity through reset, disable, offered
 traffic, stalls, and simultaneous controls. It does not validate the future

@@ -2,31 +2,36 @@
 
 The board harness, observability, sender, and automated MII/UART simulation are
 implemented, and the CME datapath is covered cycle-accurately by `dune runtest`.
-**Physical acceptance is pending.** No Arty UART device or Vivado executable was
-available in these sessions, so no bitstream was built or programmed and no board
-results are claimed.
+**Physical acceptance passed on 2026-09-09 UTC.** The complete native harness was
+synthesized and implemented for the Arty A7-100T, met the build's setup and hold timing
+gate with the DP83848J receive constraints, was programmed onto the board, and passed all
+seven physical Ethernet/UART cases in `board_acceptance.py`.
+
+The acceptance sequence has since been extended with seven MTU-scale cases (deep MBP
+groups, many-message datagrams, a full final beat, and a heavy gap/duplicate pair). Their
+expected counters are confirmed by the XML oracle, by the sender model and by Cyclesim,
+but they have **not** yet been run on hardware.
 
 ## Composition and provenance
 
-Every source and constraint in this harness belongs to **this** repository.
-`hardcaml_networking` is used as an RTL supplier only: `validation/phase7/check.sh`
-runs that repository's own committed `udp-rx-64` generator and stages the result into
-`validation/vendor/`. No CME code lives in the networking repository, this repository
-takes no OCaml dependency on it, and there is no patch to apply.
+The harness is one native Hardcaml hierarchy. The installed `hardcaml_networking` package
+provides the Arty pin interface, board helpers and `Udp.Udp_rx_64_mac_top`; the CME top calls
+that module directly alongside the feed parser and validation sink. RTL generation needs no
+sibling checkout, external Verilog blackbox, vendored file, or concatenation step.
 
 ```text
-cme_board_top                       validation/board/cme_board_top.ml
-  |- udp_rx_64_mac_top   (external) hardcaml_networking, `udp-rx-64`
-  |- cme_validation_core            validation/board/cme_validation_core.ml
-  |    |- cme_mdp3_feed_parser      lib/cme/cme_feed_parser.ml
-  |    `- cme_validation_sink       validation/board/cme_validation_sink.ml
+cme_feed_parser_validation_harness_arty
+  |                                 validation/board/cme_feed_parser_validation_harness_arty.ml
+  |- udp_rx_64_mac_top              hardcaml_networking.Udp
+  |- cme_mdp3_feed_parser           lib/cme/cme_feed_parser.ml
+  |- cme_validation_sink            validation/board/cme_validation_sink.ml
   `- board scaffolding              validation/board/board_scaffolding.ml
 ```
 
-`Board_top` (lib/common), `Clk_div` and `Second_pulse` are the Arty primitives this
-repository already carried; `board_scaffolding.ml` is the matching plumbing layer
-(per-domain reset synchronizers, the 25 MHz PHY reference divider, PHY hard-reset
-sequencing, the heartbeat).
+`Arty_board_top`, `Clk_div` and `Second_pulse` come from `hardcaml_networking`;
+`board_scaffolding.ml` supplies the matching plumbing layer (per-domain reset
+synchronizers, the 25 MHz PHY reference divider, PHY hard-reset sequencing, and the
+heartbeat).
 
 The target is **Arty A7-100T, `xc7a100tcsg324-1`, parser clock 25 MHz**. This is
 functional integration. Phase 6's continuous-wide-stream tests and the U50 production
@@ -49,7 +54,8 @@ without changing parser sequence state; selection is latched on the accepted fir
 beat and retained through the packet. The sender crafts unicast Ethernet frames for MAC
 `02:00:00:00:00:01`, IPv4 `192.168.1.1`, directly on the selected host interface, so ARP
 replies from this receive-only harness are unnecessary. Use a direct host-to-Arty cable
-and quiet unrelated traffic on that interface during capture. The wrapper selects a port;
+and quiet unrelated traffic on that interface during capture; the commands are in the
+[host setup runbook](../validation/README.md). The wrapper selects a port;
 it does not authenticate source IP/MAC and does not validate UDP checksums.
 
 `btn[0]` resets. `sw[0]` enables reception; the PHY reference clock and the UART remain
@@ -93,7 +99,7 @@ to have bad FCS or a bad IP checksum.
 
 ## Verification
 
-Three layers, all currently green.
+Four layers, all currently green.
 
 **1. `dune runtest` — the CME datapath, cycle-accurate.** Everything from the recovered
 UDP payload to the UART pin is ordinary Hardcaml, so it is reachable from Cyclesim:
@@ -114,27 +120,48 @@ sink reads the same field through `Event.Of_signal.unpack`, so a field added to
 `Cme_types.Event` can no longer silently shift the diagnostic code out from under the
 counters.
 
-**2. `validation/phase7/check.sh` — the board path, in Icarus.** MII nibbles through the
-real generated async receive FIFO, width adapter, parser, counters and UART pin, with
-independent RX and application clocks at 25 MHz and a phase offset. Only UART timing is
-accelerated, via the separate `core-sim` generator target. This is the layer `dune
-runtest` cannot reach, because the networking stack is an external instantiation.
+**2. `validation/phase7/check.sh` — the native board top, in Icarus.** MII nibbles pass
+through the real generated async receive FIFO, width adapter, parser, counters and UART
+pin, with independent RX and application clocks at 25 MHz and a phase offset. The
+`cme_feed_parser_validation_harness_arty_sim` generator target calls the same
+top-level `create` function as the bitstream build and changes only the UART timing
+parameters.
 
-**3. `phase7_contracts.ml`** — the event ABI and the nine sender fixtures against the XML
-oracle, run as part of `dune runtest`.
+**3. `phase7_contracts.ml`** — the event ABI and both sender sequences against the XML
+oracle, run as part of `dune runtest`: the nine MII vector fixtures, and separately the
+fourteen board-run payloads, each with its own golden decoder so the counters are checked
+in the sequence context that sender actually transmits.
 
 ```sh
 ./validation/phase7/check.sh
-# Optional explicit networking checkout:
-./validation/phase7/check.sh /path/to/hardcaml_networking
 ```
 
-Requirements are the existing OCaml switch, Python 3, Icarus Verilog, and a sibling
-networking checkout providing `udp-rx-64`. Artifacts are `_build/phase7/simulation.txt`,
-`rtl.sha256`, `networking_revision.txt`, `cases.json`, and the generated payload fixtures.
-The recorded run passed all nine cases and decoded eight complete atomic UART records,
-with identical counters to the pre-rewrite SystemVerilog sink. It also checked enable
-freeze and reset overriding disabled enable.
+Requirements are the existing OCaml switch with `hardcaml_networking` installed, Python 3,
+and Icarus Verilog. Artifacts are `_build/phase7/simulation.txt`, `rtl.sha256`,
+`networking_package.txt`, `cases.json`, and the generated payload fixtures.
+The recorded native-top run passed all nine cases and decoded nineteen complete atomic
+UART records. It also checked enable freeze and reset overriding disabled enable entirely
+through the board UART and LED outputs.
+
+**4. Physical Arty A7 run.** Vivado synthesis and implementation completed for
+`xc7a100tcsg324-1`; the worst setup and hold path checks in `build.tcl` passed, allowing
+the bitstream to be written and programmed. The host then sent the seven physical cases
+through `enx207bd25880ef` and decoded counter snapshots from `/dev/ttyUSB1`. The capture
+started at `2026-09-09T00:09:15Z`; every case recorded two consecutive snapshots equal to
+the expected counters and the run ended with `6, 7, 6, 2, 0, 0, 1, 1`.
+
+The seven MTU-scale cases were added to the sequence afterwards and ran on the same
+programmed board later the same night. Both fourteen-case captures passed with the same
+final counters, `13, 237, 33, 4, 0, 0, 2, 2`: `_build/phase7/board-capture.json` started
+at `2026-09-09T00:51:37Z` and `_build/phase7/acceptance.json` at `2026-09-09T01:29:57Z`.
+The second is a plain repeat after a board reset, so the sequence is reproducible rather
+than a single observation.
+
+The known networking EtherType/receive-metadata clock-domain-crossing concern did not
+affect this board run. IPv4/UDP traffic reached the parser, the other-destination-port
+case left all parser counters unchanged, and the following selected packet was processed
+with the expected counters. This is direct evidence for the exercised traffic and clock
+conditions; it is not a general CDC proof for every phase relationship or frame type.
 
 | Case | Sequence | Packets | Updates | End markers | Diagnostics | CRC / IP errors | Gaps / duplicates |
 | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
@@ -155,60 +182,137 @@ full field-by-field UART event capture.
 
 ## Build and run on the board
 
-Generate every RTL input with `check.sh` above, then, with Vivado installed and licensed:
+`check.sh` writes **`cme_feed_parser_validation_harness_arty.v`**. This one generated file
+contains the complete networking, parser, sink and board hierarchy and elaborates on its
+own with `cme_feed_parser_validation_harness_arty` as the synthesis top.
+
+With Vivado installed and licensed:
 
 ```sh
 vivado -mode batch -source validation/phase7/build.tcl -tclargs _build/phase7/vivado
 ```
 
-The Tcl builds `cme_board_top` on `xc7a100tcsg324-1` against this repository's own
-`validation/constraints/cme_arty.xdc`, saves routed timing, utilization, CDC,
-clock-interaction and DRC reports, and writes a bitstream only when the reported worst
-setup and hold paths pass.
+The Tcl builds `cme_feed_parser_validation_harness_arty` on `xc7a100tcsg324-1` against
+this repository's own `validation/constraints/cme_arty.xdc`, saves routed timing,
+utilization, CDC, clock-interaction and DRC reports, and writes a bitstream only when the
+reported worst setup and hold paths pass.
 
-**That XDC still carries placeholder MII input delays**, inherited from the networking
-harness and marked `TODO` in the file. They are not values from the DP83848 datasheet, so
-a timing report taken against them says nothing about real PHY interface margin. Replace
-them before claiming board timing closure on the MII pins. The parser-only Arty timing
-reports in `retargeting.md` do not cover this composed board harness either.
+The XDC models the DP83848J 100 Mb/s MII receive interface from the incoming 25 MHz
+`eth_rx_clk`: T2.5.2 supplies a 10 ns minimum and 30 ns maximum clock-to-output delay for
+`eth_rxd[*]`, `eth_rx_dv`, and `eth_rxerr`. These are PHY-pin values. Arty PCB
+data-versus-clock trace skew has not been characterized or included, so routed timing is
+still first-order interface evidence. The completed implementation passed setup and hold
+timing with this model. No numerical WNS/WHS values are stored in the board-capture JSON;
+retain the Vivado reports when numerical margin is needed. The parser-only Arty reports
+in `retargeting.md` do not cover this composed board harness.
 
-Program `_build/phase7/vivado/cme_board_top.bit` using Vivado Hardware Manager. Connect
-the board's Ethernet jack directly to the intended host interface and its USB UART to the
-host. Set `sw[0]` high, press/release `btn[0]`, and wait for PHY release and link. Then
-run, substituting the actual interface and serial device:
+This validation profile assumes the link negotiates **100BASE-TX**. At 10 Mb/s the PHY
+drives 2.5 MHz MII clocks, which needs a separate timing constraint set; the current UART
+divisor also relies on the 25 MHz application clock. Confirm a 100 Mb/s link on the host
+and jack indicators before running the cases.
+
+Program `_build/phase7/vivado/cme_feed_parser_validation_harness_arty.bit` using Vivado
+Hardware Manager. Connect the board's Ethernet jack directly to host interface
+`enx207bd25880ef` and its USB UART to the host. Set `sw[0]` high, press/release `btn[0]`,
+and wait for PHY release and a 100 Mb/s link. Then run, substituting the actual serial
+device:
 
 ```sh
-sudo python3 validation/phase7/board_cases.py run \
-  --iface enxYOUR_INTERFACE --serial /dev/ttyUSB1 \
+sudo python3 validation/phase7/board_acceptance.py run \
+  --serial /dev/ttyUSB1 \
   --output _build/phase7/board-capture.json
 ```
 
+`--iface` defaults to `enx207bd25880ef`; pass it explicitly to override that interface.
+Prepare that interface first — unmanage it, disable IPv6 and flush its address per
+[validation/README.md](../validation/README.md). Background host traffic reaches the
+network counters ahead of the port filter, so it can break both the all-zero baseline
+check and the expected tuple below.
+
 Raw Ethernet sending requires `CAP_NET_RAW` (the example uses `sudo`). The UART baseline
 must be all zeros; a nonzero baseline fails with a request to reset the board. The sender
-waits for two expected snapshots after each datagram. A healthy run prints seven `PASS`
-lines and finishes with counters `6, 7, 6, 2, 0, 0, 1, 1`. JSON output includes per-case
-observations, pass/fail, UTC time, interface, serial path, the networking revision, and
-hashes of the board RTL, the parser RTL, the vendored network RTL, the constraints and the
-schema. A `.uart.bin` file retains the captured bytes.
+waits for two expected snapshots after each datagram. A healthy run prints fourteen `PASS`
+lines and finishes with counters `13, 237, 33, 4, 0, 0, 2, 2`. JSON output includes per-case
+observations, pass/fail, UTC time, interface, serial path, the installed networking-package
+record, and hashes of the integrated board RTL, parser RTL, constraints and schema. A
+`.uart.bin` file retains the captured bytes.
 
 The ordinary NIC adds FCS itself, so the host acceptance sequence excludes the
-simulation-only bad-FCS and bad-IP cases. Do not append the simulation FCS to
-NIC-transmitted Ethernet frames. To regenerate fixtures without sending anything:
+simulation-only bad-FCS case. Do not append the simulation FCS to NIC-transmitted Ethernet
+frames. To regenerate fixtures without sending anything:
 
 ```sh
-python3 validation/phase7/board_cases.py vectors _build/phase7
+python3 validation/phase7/board_acceptance.py vectors _build/phase7
 ```
+
+The MTU-scale cases are in the board run and in the payload fixtures, but deliberately not
+in `mii_vectors.txt`: iverilog is the elaboration and compile gate, and functional coverage
+of heavy traffic lives in Cyclesim, in
+`test/cme/validation_core/validation_core_heavy_traffic_tests.ml`. That suite mirrors this
+acceptance sequence packet for packet, so it fails before anyone reaches for hardware.
+
+### Exploratory traffic
+
+`board_acceptance.py run` is the fixed pass/fail acceptance: it asserts absolute counter
+tuples, so it requires a freshly reset board. For anything else — soak runs, one-off
+shapes, malformed messages — use the flexible sender, which compares before/after deltas
+against its own model rather than absolute tuples:
+
+```sh
+sudo python3 validation/phase7/feed_traffic.py --iface enx207bd25880ef --serial /dev/ttyUSB1 \
+  --count 2000 --shape mtu-deep,mtu-wide --last-only \
+  --inject bad-size@20,beyond-packet@30 --bad-ip-after 40 --output _build/soak.json
+```
+
+`bad-size` and `beyond-packet` replace a message body with a short raw message, so they
+fit any shape. `unsupported` instead prefixes a further message, and the `mtu-*` shapes are
+by construction the largest that fit a datagram, so pairing the two overflows the MTU and
+the run is refused before anything is sent. Give it a shape with room to grow — say
+`--shape 8x4` — in a separate run.
+
+Two soak runs are recorded. `_build/soak.json` offered 2000 MTU-sized datagrams
+(2 953 148 bytes) alternating deep and wide in 0.23 s, and `_build/soak_injections.json`
+offered 20 000 datagrams at `8x4` (26 677 500 bytes) in 2.16 s with `unsupported`,
+`bad-size` and `beyond-packet` injections and one corrupted IPv4 checksum. Both reported an
+observed counter delta identical to the prediction. The offered rate of roughly 99–102 Mb/s
+saturates the 100BASE-TX link, so it bounds the Arty adapter rather than the parser.
+
+`--dump` writes the frames to disk instead, needing neither privileges nor a board. A bad
+Ethernet FCS cannot be provoked this way: the NIC generates the real one, so `crc_errors`
+is reachable only from the MII vectors and the Cyclesim suite.
+
+**Sequencer session state.** The counters are deltas and need no reset, but the parser's
+expected sequence number is session state and the 36-byte UART record does not carry it —
+it is a magic word and eight counters. The board therefore cannot be asked where its
+sequencer is. `feed_traffic.py` remembers it in `_build/phase7/sender_state.json`, keyed by
+interface and destination port, so repeated runs continue rather than replaying an
+already-consumed range. An all-zero UART baseline means the board was reset and the record
+is discarded. If the board carries traffic this script did not send, the position is
+genuinely unknowable and the run refuses, asking for a board reset or an explicit
+`--assume-next-sequence N`.
+
+Passing `--sequence` explicitly still forces whatever you ask for — a replay of an old
+range, or a jump forward — and the prediction accounts for it, so
+`--sequence <old start>` correctly predicts a run of duplicates rather than a clean pass.
 
 ## Acceptance status
 
-- **7.1 complete:** harness composed entirely within this repository; RTL generated and
-  the board hierarchy elaborated; networking revision and generation commands recorded.
+- **7.1 complete:** one native Hardcaml harness instantiates networking, parser and sink;
+  its self-contained RTL hierarchy elaborates and the installed networking package is
+  recorded.
 - **7.2 complete:** port selection, eight counters, LEDs, atomic UART snapshots, separate
   late-network status, and automated host comparison implemented — now in Hardcaml and
   covered by `dune runtest`.
-- **7.3 pending on hardware:** all selected cases pass full MII RTL simulation; the seven
-  physical board cases have not been run.
-- **7.4 pending on hardware:** setup, sender commands, expected observations, and
-  simulation evidence are recorded. Actual bitstream reports and board capture remain
-  required before marking Phase 7 accepted. The placeholder MII input delays above are a
-  prerequisite for any board timing claim.
+- **7.3 complete:** all selected cases pass full MII RTL simulation, and all fourteen
+  physical board cases — the seven base cases and the seven MTU-scale cases added
+  afterwards — passed through the programmed Arty Ethernet and UART interfaces, in two
+  separate captures. Sustained traffic from the flexible sender matched its predicted
+  counter deltas across repeated runs on the same board.
+- **7.4 complete:** the setup, sender command, expected observations, and captured result
+  are recorded. Vivado synthesis/implementation passed the setup and hold gate and the
+  programmed bitstream produced the expected final counters. The capture is
+  `_build/phase7/board-capture.json`, with raw UART data in the adjacent `.uart.bin` file.
+
+Phase 7 functional board acceptance is complete. Arty PCB receive-clock/data skew remains
+absent from the first-order PHY timing model, and the passing EtherType cases bound the
+observed CDC result to this test rather than establishing a general structural CDC proof.

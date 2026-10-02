@@ -13,8 +13,11 @@ let%test_unit "exact capacity, replacement, wrap, pauses and reset cancellation"
     ())
 ;;
 
+(* Depth 2, not 1: non-greedy admission cannot refill the slot it drains, so a one-deep
+   elastic FIFO admits on alternate cycles and has no full-rate pass-through at all. Its
+   sustained rate is carried by depth - 1 slots. See docs/phase6_notes.md. *)
 let%test_unit "continuous input and output after startup" =
-  List.iter [ 1; 3; 64 ] ~f:(fun depth ->
+  List.iter [ 2; 3; 64 ] ~f:(fun depth ->
     let result = run ~continuous:true ~resets:false depth in
     [%test_result: int] result.outputs ~expect:result.inputs;
     assert (result.outputs > 1000))

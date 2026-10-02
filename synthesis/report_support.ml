@@ -9,6 +9,71 @@ open! Core
 open! Async
 module Reports = Hardcaml_xilinx_reports
 
+(* The part and the clock are one indivisible choice, so they are named together here and
+   the underlying [-part] / [-clock] flags are removed. Phases 0-6 recorded every device
+   number against [-part xc7a100tcsg324-1 -clock clock_i:156.25]: the validation part held
+   to the production clock, a combination that describes no operating point anybody
+   intends. See docs/retargeting.md. *)
+module Profile = struct
+  type t =
+    | Production
+    | Validation
+
+  (* Every interface in the design names its clock [clock_i]. *)
+  let clock_port_name = "clock_i"
+
+  let name = function
+    | Production -> "production"
+    | Validation -> "validation"
+  ;;
+
+  let part_name = function
+    | Production -> "xcu50-fsvh2104-2-e"
+    | Validation -> "xc7a100tcsg324-1"
+  ;;
+
+  let frequency_mhz = function
+    | Production -> 156.25
+    | Validation -> 25.
+  ;;
+
+  let period_ns t = 1000. /. frequency_mhz t
+
+  let establishes = function
+    | Production -> "establishes 10G timing closure; the only profile that can"
+    | Validation ->
+      "establishes Arty A7-100T board acceptance only; says nothing about throughput"
+  ;;
+
+  let clock t =
+    Reports.Clock.create_mhz ~name:clock_port_name ~frequency_mhz:(frequency_mhz t) ()
+  ;;
+
+  let all = [ Production; Validation ]
+  let arg_type = Command.Arg_type.of_alist_exn (List.map all ~f:(fun t -> name t, t))
+
+  let param =
+    Command.Param.flag
+      "-profile"
+      (Command.Param.required arg_type)
+      ~doc:"production|validation device profile; selects part and clock together"
+  ;;
+
+  (* The standing rule in docs/retargeting.md is that a device number naming only one of
+     its part and its clock is not evidence. Printing both beside every summary is what
+     enforces it. *)
+  let describe t =
+    sprintf
+      "Profile: %s; part %s; clock %s at %g MHz (%.3f ns period); %s"
+      (name t)
+      (part_name t)
+      clock_port_name
+      (frequency_mhz t)
+      (period_ns t)
+      (establishes t)
+  ;;
+end
+
 type report_artifacts =
   { compact : string
   ; utilization : string
@@ -48,15 +113,23 @@ let normalize_resource_name name =
 let utilization_rows contents =
   let wanted =
     String.Set.of_list
-      [ "Slice LUTs"
+      [ (* Series-7 names the first two rows "Slice ..."; UltraScale+ names them "CLB
+           ...". Both are listed because a row that is absent from this set is dropped
+           from the summary without any diagnostic. *)
+        "Slice LUTs"
+      ; "CLB LUTs"
       ; "LUT as Logic"
       ; "LUT as Memory"
       ; "LUT as Distributed RAM"
       ; "LUT as Shift Register"
       ; "Slice Registers"
+      ; "CLB Registers"
       ; "Register as Flip Flop"
+      ; "CARRY4"
+      ; "CARRY8"
       ; "F7 Muxes"
       ; "F8 Muxes"
+      ; "F9 Muxes"
       ; "Block RAM Tile"
       ; "DSPs"
       ]
@@ -129,12 +202,13 @@ let require_refreshed_artifacts artifacts previous_modification_times =
               (current : float)])
 ;;
 
-let print_reports ~full_report artifacts previous_modification_times =
+let print_reports ~profile ~full_report artifacts previous_modification_times =
   let compact = read_required_report artifacts.compact in
   let utilization = read_required_report artifacts.utilization in
   let timing = read_required_report artifacts.timing in
   require_refreshed_artifacts artifacts previous_modification_times;
   ignore compact;
+  printf "\n%s\n" (Profile.describe profile);
   print_utilization_summary ~path:artifacts.utilization utilization;
   print_timing_summary ~path:artifacts.timing timing;
   print_artifact_paths artifacts;
@@ -152,7 +226,12 @@ let report_command ~name run =
     ~summary:("Synthesis reports for " ^ name)
     (let open Command.Let_syntax in
      let%map_open () = return ()
-     and flags = Reports.Command.Command_flags.flags ()
+     and profile = Profile.param
+     (* [-part] and [-clock] are replaced by [-profile], not supplemented by it: a
+        deliberate loss of expressiveness, since the pair drifting apart is the failure
+        this guards against. Restoring an override means restoring the drift. *)
+     and flags =
+       Reports.Command.Command_flags.flags ~part_name:(return "") ~clocks:(return []) ()
      and full_report =
        flag
          "-full-report"
@@ -160,8 +239,15 @@ let report_command ~name run =
          ~doc:" print the complete Vivado utilization and timing reports"
      in
      fun () ->
-       (* Standard Vivado reports are always required on Artix-7; see [primitive_groups]. *)
-       let flags = { flags with reports = true } in
+       (* Standard Vivado reports are always required; see [primitive_groups]. *)
+       let flags =
+         { flags with
+           reports = true
+         ; part_name = Profile.part_name profile
+         ; clocks = [ Profile.clock profile ]
+         }
+       in
+       printf "%s\n" (Profile.describe profile);
        let artifacts = report_artifacts ~flags ~name in
        let previous_modification_times =
          List.map (artifact_paths artifacts) ~f:modification_time
@@ -170,7 +256,7 @@ let report_command ~name run =
        let%map () = run flags in
        Out_channel.flush Out_channel.stdout;
        if flags.run
-       then print_reports ~full_report artifacts previous_modification_times
+       then print_reports ~profile ~full_report artifacts previous_modification_times
        else (
          printf "Generated report project in %s\n" (Filename.dirname artifacts.compact);
          printf "Add -run to invoke Vivado and print the report summary.\n"))

@@ -2,21 +2,23 @@
 
 Host-side setup for the Phase 7 Arty harness. The board procedure itself — programming,
 controls, the acceptance run, the UART record and the counter tuples — is in
-[docs/phase7_integration.md](../docs/phase7_integration.md); this document covers only
-preparing the host Ethernet interface so that nothing but test traffic reaches the board.
+[docs/phase7_integration.md](../docs/phase7_integration.md). This document covers preparing
+the host Ethernet interface so that nothing but test traffic reaches the board, and the
+commands a validation session actually runs.
 
 | Path | Contents |
 | --- | --- |
 | `board/` | The Hardcaml harness: Arty top, validation core (port select) and observability sink. |
 | `constraints/cme_arty.xdc` | Board constraints, including the DP83848J MII receive model. |
-| `phase7/board_cases.py` | Fixed pass/fail acceptance sequence and MII vector generation. |
+| `phase7/board_acceptance.py` | Fixed pass/fail acceptance sequence and MII vector generation. |
 | `phase7/check.sh` | Regenerates the RTL and runs the full simulation gate. |
-| `send_frames.py` | Flexible sender for soak runs, arbitrary shapes and malformed injections. |
+| `phase7/feed_traffic.py` | Flexible sender for soak runs, arbitrary shapes and malformed injections. |
+| `phase7/test_board_acceptance.py` | Host-side unit tests for both senders; needs no board. |
 
 ## Prepare the host interface
 
 The examples use this USB Ethernet interface, which is also `DEFAULT_IFACE` in
-`phase7/board_cases.py`:
+`phase7/board_acceptance.py`:
 
 ```bash
 export FPGA_IFACE=enx207bd25880ef
@@ -91,10 +93,10 @@ ip_errors   <- rx_frame_done_i & ~checksum_ok_i
 byte, so background IPv6 mDNS, ARP or DHCP frames arrive with `checksum_ok_i` low and are
 eligible to move `ip_errors`. The acceptance sequence asserts absolute counters —
 `13, 237, 33, 4, 0, 0, 2, 2`, with `crc_errors` and `ip_errors` at zero — from a baseline
-that `board_cases.py` requires to be all zeros. Host chatter after the reset can break the
+that `board_acceptance.py` requires to be all zeros. Host chatter after the reset can break the
 baseline check, the final tuple, or both.
 
-`send_frames.py --serial` compares before/after deltas against its own model rather than
+`feed_traffic.py --serial` compares before/after deltas against its own model rather than
 absolute values, so it tolerates a noisy link better, but the counters it reports are still
 polluted.
 
@@ -134,6 +136,114 @@ stack:
       /etc/avahi/avahi-daemon.conf
   sudo systemctl restart avahi-daemon
   ```
+
+## Example runs
+
+The board procedure itself — programming, the controls, the expected counter tuples — is in
+[docs/phase7_integration.md](../docs/phase7_integration.md). What follows is only the
+command form of a confirmed session, in the order it was run, against `enx207bd25880ef`
+and `/dev/ttyUSB1`.
+
+Reset the board (press and release `btn[0]`) before the acceptance run: it refuses any
+baseline that is not all zeros. After that the runs below chain without further resets,
+because `feed_traffic.py` remembers where the sequencer got to. Going back to the
+acceptance run afterwards does need another reset.
+
+None of the offline checks need the board, privileges or a network:
+
+```bash
+./validation/phase7/check.sh                     # RTL regen + the full MII simulation
+./scripts/with-switch.sh dune runtest validation/phase7
+(cd validation/phase7 && python3 -B -m unittest test_board_acceptance)
+```
+
+### 1. Acceptance run
+
+The fixed case list, checked against absolute counter tuples. Requires the zero baseline:
+
+```bash
+sudo python3 validation/phase7/board_acceptance.py run \
+    --serial /dev/ttyUSB1 \
+    --output _build/phase7/acceptance.json
+```
+
+`--iface` defaults to `DEFAULT_IFACE`, so it can be left off on this host. The run writes
+`acceptance.json` and the raw UART capture `acceptance.uart.bin` beside it.
+
+### 2. Traffic generator smoke
+
+Twenty packets with one sequence gap and one duplicate. Unlike the acceptance run this
+compares before/after counter *deltas* against the sender's own model, and prints `MATCH`
+or `MISMATCH`:
+
+```bash
+sudo python3 validation/phase7/feed_traffic.py \
+    --iface enx207bd25880ef \
+    --serial /dev/ttyUSB1 \
+    --count 20 \
+    --gap-after 5 \
+    --duplicate-after 9
+```
+
+### 3. MTU soak
+
+Two thousand maximum-sized datagrams alternating deep and wide, one event each, with two
+malformed messages and a corrupted IPv4 checksum mixed in:
+
+```bash
+sudo python3 validation/phase7/feed_traffic.py \
+    --iface enx207bd25880ef \
+    --serial /dev/ttyUSB1 \
+    --count 2000 \
+    --shape mtu-deep,mtu-wide \
+    --last-only \
+    --inject bad-size@20,beyond-packet@30 \
+    --bad-ip-after 40 \
+    --output _build/soak.json
+```
+
+### 4. Malformed-message soak
+
+The same volume at a shape with headroom, which is what lets the third injection kind run:
+
+```bash
+sudo python3 validation/phase7/feed_traffic.py \
+    --iface enx207bd25880ef \
+    --serial /dev/ttyUSB1 \
+    --count 2000 \
+    --shape 8x4 \
+    --last-only \
+    --inject unsupported@10,bad-size@20,beyond-packet@30 \
+    --bad-ip-after 40 \
+    --output _build/soak_injections.json
+```
+
+`unsupported` cannot be combined with `mtu-deep` or `mtu-wide`. It *prefixes* a 32-byte
+template-99 message rather than replacing the body, and both named shapes are by
+construction the largest that fit a datagram, so the packet lands at 1484 bytes against the
+1472-byte limit and the run is refused before anything is sent:
+
+```text
+packet_10: shape 1x44 needs 1484 payload bytes, over the 1472-byte MTU limit
+```
+
+`bad-size` and `beyond-packet` replace the message body with a short raw message, so they
+fit any shape — which is why runs 3 and 4 are split.
+
+### Ownership of the artefacts
+
+Everything above runs under `sudo`, so the reports and the sequencer state land root-owned
+inside `_build/`, where dune will later trip over them. `feed_traffic.py` also has to read
+its own state file back on the next run:
+
+```bash
+sudo chown -R "$USER" _build/phase7 _build/soak.json _build/soak_injections.json
+```
+
+If that state ever goes stale — the board was reset underneath it, or something else sent
+traffic — the sender warns that the counters moved unexpectedly. `--forget-state` ignores
+the record, deleting `_build/phase7/sender_state.json` clears it, and
+`--assume-next-sequence N` overrides it when the board's position is known.
 
 ## Wireshark filters
 

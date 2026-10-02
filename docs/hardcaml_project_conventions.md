@@ -56,8 +56,9 @@ The incoming payload uses `data_i`, `keep_i`, `valid_i`, `first_i`, `last_i`, an
 retain unsuffixed field names, with explicit mapping at the external boundary.
 
 Reset, enable, control arbitration, and internal ownership are specified in
-[the Phase 0 contract](phase0_contracts.md). The current top is explicitly
-inactive; smoke tests check that it acknowledges no traffic or controls.
+[the Phase 0 contract](phase0_contracts.md). The public top is active as of
+[Phase 5](phase5_decoding.md); integration tests check normalized events and
+control fencing.
 
 ## Toolchain and verification
 
@@ -92,8 +93,8 @@ the change's scope.
 CME verification follows [test_architecture.md](test_architecture.md). The active
 Phase 0 suite lives in `test/cme/cme_feed_parser/`. It checks generated Verilog port names,
 directions and widths, event packing and reserved encodings, FIFO configuration,
-and skeleton inactivity across reset/enable and offered traffic/control cases.
-It does not yet validate parsing or the future stateful reset/control behavior.
+and, since Phase 5, integrated parsing, reset/enable behavior, and stateful controls.
+The historical inactive-top assertion executable remains compile-only.
 Phase 1 has separate `ingress_fifo/`, `event_fifo/`, `byte_aligner/`, and
 `stream_foundation/` inline suites. Each exposes a Step testbench, unit/Quickcheck
 properties, and expect traces. Shared support lives in `test/common/verif/` and
@@ -105,8 +106,9 @@ independent packet scoreboard and control-fence scenarios; see
 Phase 3 message traversal/recovery and decoder-event ordering; see
 [Phase 3](phase3_messages.md). `schema/` contains the Phase 4 direct-XML unit,
 Quickcheck, expect, checksum, and classic-PCAP oracle tests; see
-[Phase 4](phase4_schema.md). Later phases extend these conventions for the RTL
-decoder and system tests.
+[Phase 4](phase4_schema.md). `mbp_decoder/` checks completed-entry ownership across
+stalled aborts, while `cme_feed_parser/` now compares the active integrated parser
+against the independent XML oracle; see [Phase 5](phase5_decoding.md).
 
 `./scripts/with-switch.sh dune build @rtl-check` runs the optional thin Yosys
 hierarchy and Icarus elaboration checks. Device reporting is the separate
@@ -122,5 +124,5 @@ Generate RTL with:
 ```
 
 Outputs are ignored `cme_mdp3_feed_parser.v` and `uart_test_top.v` at the project
-root. No generator argument preserves the UART default. The CME RTL carries an
-inactive-skeleton notice; unused declared inputs are retained in its port list.
+root. No generator argument preserves the UART default. The CME generator emits
+the active parser with its complete child hierarchy and unchanged public ports.

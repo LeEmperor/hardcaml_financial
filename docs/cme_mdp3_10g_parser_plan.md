@@ -55,12 +55,10 @@ particular, the current networking stack forwards all destination ports during
 bring-up, so the host test sender or wrapper is responsible for selecting the
 intended traffic.
 
-The sibling repository generates this shell as
-`hardcaml_udp_rx_64_with_mac.v` with:
-
-```sh
-dune exec lib/common/generate.exe -- udp-rx-64
-```
+The installed `hardcaml_networking` package exposes this shell as
+`Hardcaml_networking.Udp.Udp_rx_64_mac_top`.  The Arty validation harness
+instantiates it directly, so one Hardcaml generation pass emits the complete
+networking, parser, diagnostics, and board hierarchy.
 
 ### Network error and timestamp boundary
 
@@ -332,7 +330,9 @@ Goal: move framed payload bytes correctly before interpreting CME fields.
   deterministic and randomized stalls and bubbles. Include exact Arty shim
   signal mapping and byte-source-like gaps.
 - [x] **1.2 — Implement elasticity.** Build the parameterized ingress beat FIFO
-  and reusable event FIFO, using the planned 64-beat and 16-event defaults. Carry
+  and reusable event FIFO, using the planned 64-beat and 16-event defaults (the
+  ingress default became 65 in Phase 6, one slot paying for non-greedy admission
+  so that 64 beats of elasticity survive at full rate). Carry
   framing and sampled packet context with buffered data and test full/empty
   transitions and simultaneous enqueue/dequeue.
 - [x] **1.3 — Implement byte access.** Build the accepted-byte offset tracker and
@@ -445,19 +445,26 @@ golden decoder without using generated RTL extraction code as its oracle.
 
 #### Phase 5 — MBP decoding and normalized events
 
+Completed 2026-09-07. The [Phase 5 implementation record](phase5_decoding.md)
+documents the generated-descriptor decoder, active public parser, ordered event
+storage, deterministic conformance and truncation coverage, and RTL smoke evidence.
+The [Phase 6 record](phase6_verification.md) contains passing throughput/latency
+checks and fresh device estimates; the 156.25 MHz device timing target remains
+unmet.
+
 Goal: complete the portable parser's market-data behavior.
 
-- [ ] **5.1 — Decode the selected template.** Implement schema-sized root/group
+- [x] **5.1 — Decode the selected template.** Implement schema-sized root/group
   collectors and MBP field extraction from generated descriptors. Use runtime
   block lengths and skip the MBO group using its runtime dimensions.
-- [ ] **5.2 — Apply schema rules.** Handle compatible extensions, `sinceVersion`,
+- [x] **5.2 — Apply schema rules.** Handle compatible extensions, `sinceVersion`,
   null sentinels, signed values, invalid enums, and incompatible schema IDs or
   undersized blocks as specified below.
-- [ ] **5.3 — Complete the event stream.** Emit one update per MBP entry with
+- [x] **5.3 — Complete the event stream.** Emit one update per MBP entry with
   packet/message context, entry indices/counts, and `message_last`; emit
   `End_of_event` for bit 7 of `MatchEventIndicator`, including zero-entry messages.
   Merge all diagnostics in packet order and connect the output event FIFO.
-- [ ] **5.4 — Verify decoding.** Compare deterministic cases with the golden
+- [x] **5.4 — Verify decoding.** Compare deterministic cases with the golden
   decoder, covering every supported update action/entry type, null and numeric
   limits, group padding/truncation, multiple messages, and downstream stalls.
 
@@ -466,20 +473,29 @@ deterministic conformance suite and propagates backpressure safely to ingress.
 
 #### Phase 6 — System conformance and performance evidence
 
+Resumed on 2026-09-07. The [Phase 6 verification record](phase6_verification.md)
+contains the fixes, reproduction commands, and expanded performance evidence.
+Functional, structural, and all 14 enforcing throughput/latency cases pass.
+Fresh full-parser device reporting is recorded: 8,014 LUTs, 7,609 flip-flops,
+and −16.428 ns post-synthesis worst setup slack on `xc7a100tcsg324-1` at
+156.25 MHz. The device timing target is not met; physical 10G closure remains
+open. The original cycle-level failure is preserved in the
+[pickup record](phase6_pickup.md).
+
 Goal: establish the portable core's functional and throughput acceptance evidence.
 
-- [ ] **6.1 — Differential stress tests.** Compare thousands of schema-valid
+- [x] **6.1 — Differential stress tests.** Compare thousands of schema-valid
   randomized packets with the independent model. Mix sequencing faults,
   malformed/truncated packets, reset/resync cases, and randomized backpressure.
   Use the same Step testbenches and typed observations as the unit/expect suites,
   with explicit Quickcheck seeds, trial counts, and validity-preserving shrinkers.
   Save minimized failures as named regressions; add sanitized real-capture replay
   when available without making it a prerequisite.
-- [ ] **6.2 — Throughput and latency tests.** Under continuous `event_ready_i`,
+- [x] **6.2 — Throughput and latency tests.** Under continuous `event_ready_i`,
   exercise uninterrupted 64-bit traffic and back-to-back legal packet/message
   combinations. Prove no internally generated input stalls or lost events and
   the eight-cycle entry-to-event latency bound in the acceptance criteria.
-- [ ] **6.3 — RTL checks.** Generate the full parser hierarchy, check for
+- [x] **6.3 — RTL checks.** Generate the full parser hierarchy, check for
   combinational loops and unintended packet-wide muxes, and collect available
   synthesis/resource and timing estimates through the OCaml Xilinx reporting
   command. Keep the Yosys hierarchy and Icarus elaboration smoke checks narrow;
@@ -496,21 +512,54 @@ does not become a claim of physical 10G timing closure.
 
 Goal: exercise the parser behind the existing physical UDP receive path.
 
-- [ ] **7.1 — Compose the board harness.** Add the harness beside the networking
+Implementation and reproducible simulation are recorded in
+[Phase 7 integration](phase7_integration.md). The harness and observability are
+implemented. Vivado synthesis and implementation passed timing with the DP83848J MII
+receive constraints, the bitstream was programmed onto the Arty A7, and the acceptance
+sequence passed on 2026-09-09 UTC — first the seven base cases, then the full fourteen
+with the MTU-scale cases included. Repeated soak runs against the same programmed board
+matched the sender's predicted counter deltas exactly.
+
+- [x] **7.1 — Compose the board harness.** Add the harness beside the networking
   board harnesses, wire `Udp_rx_64_mac_top` to generated CME RTL, share the 25 MHz
   application clock/reset/enable, and tie ingress timestamp to zero. Record the
   networking revision and RTL generation commands used for integration.
-- [ ] **7.2 — Add observability.** Expose accepted-packet, decoded-update, parser
+- [x] **7.2 — Add observability.** Expose accepted-packet, decoded-update, parser
   diagnostic, and late-network-error counters or UART records. Select intended
   traffic in the sender/wrapper and keep late CRC/IP status outside parser events.
-- [ ] **7.3 — Run the board cases.** Send synthetic MDP payloads in UDP datagrams,
+- [x] **7.3 — Run the board cases.** Send synthetic MDP payloads in UDP datagrams,
   compare observed counters/events with expected results, and include multiple
   messages, partial final beats, sequence gaps, and duplicate packets.
-- [ ] **7.4 — Record acceptance.** Document board setup, sender commands, expected
+- [x] **7.4 — Record acceptance.** Document board setup, sender commands, expected
   observations, and captured results. Record provisional event validity on this
   permissive network path and distinguish board evidence from phase 6 evidence.
 
-Exit criteria: end-to-end board results match the selected synthetic cases.
+Two host senders drive the board, with runnable commands for both in the
+[validation host setup](../validation/README.md): `board_acceptance.py` runs the fixed
+pass/fail sequence against absolute counter tuples and therefore requires a freshly reset
+board, and `feed_traffic.py` runs soak, arbitrary shapes and malformed injections,
+comparing before/after counter deltas against its own model instead. The harness sequencer
+position is session state the UART record does not carry, so the flexible sender remembers
+it between runs; repeated runs continue rather than replaying a consumed range. Host-side
+behaviour of both is covered by a unit suite that needs no board, privileges or network,
+including a guard that plans every example printed by the sender's `--help` so the
+documented commands cannot rot.
+
+Exit criteria: end-to-end board results match the selected synthetic cases. **Met:** each
+physical case produced two matching UART snapshots. The seven base cases ended on
+`6, 7, 6, 2, 0, 0, 1, 1`, and the fourteen-case sequence that adds the MTU-scale cases
+ended on `13, 237, 33, 4, 0, 0, 2, 2` (`_build/phase7/acceptance.json`, started
+`2026-09-09T01:29:57Z`). Soak evidence is separate and cumulative: successive
+`feed_traffic.py` runs — 2000 MTU-sized datagrams alternating deep and wide, then 20000
+at `8x4` with malformed messages and a corrupted IPv4 checksum injected — each reported an
+observed counter delta equal to the prediction. The board's last recorded position is
+`30000, 967520, 29988, 14, 0, 6, 0, 0` (`_build/phase7/sender_state.json`): no CRC error
+at any point, and no sequence gap or duplicate since the last reset, across 967520 decoded
+updates. Offered rate saturated the 100BASE-TX link at roughly 99–102 Mb/s, which bounds
+the adapter rather than the parser. The known EtherType/receive-metadata CDC concern did not
+affect these cases, including filtered traffic followed by a selected packet; that result
+is scoped to the exercised board runs rather than a general CDC proof.
+
 Harness preparation may start after phase 1 using its fixture, but full v1
 completion requires both phase 6 and phase 7 acceptance. Hardware availability
 does not prevent completing the portable-core phases.
@@ -571,7 +620,7 @@ message-walking/extraction architecture; it is not part of v1.
 - Use the implemented [test architecture](test_architecture.md): one suite per
   DUT/integration boundary, shared Step/Cyclesim construction, typed observations,
   named inline unit tests, seeded Quickcheck properties, and short expect traces.
-  `dune runtest` runs the Phase 0–3 suites. Add later-phase tests to this
+  `dune runtest` runs the Phase 0–5 suites. Add later-phase tests to this
   architecture, keeping independent software expectations and bounded draining.
 - Run the optional `@rtl-check` alias for Yosys hierarchy resolution and Icarus
   elaboration. Use [OCaml/Dune reports](hardcaml_reports.md) for explicit device

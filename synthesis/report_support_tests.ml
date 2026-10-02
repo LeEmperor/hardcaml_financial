@@ -65,3 +65,22 @@ let%test_unit "resource summary uses standard report rows and removes duplicates
     (utilization_rows (row ^ "\n" ^ row))
     ~expect:[ "Slice LUTs", "12", "63400", "0.02" ]
 ;;
+
+let%test_unit "device profiles pair a part with a clock and neither can drift alone" =
+  [%test_result: (string * string * float) list]
+    (List.map Profile.all ~f:(fun profile ->
+       ( Profile.name profile
+       , Profile.part_name profile
+       , Float.round_significant ~significant_digits:6 (Profile.period_ns profile) )))
+    ~expect:
+      [ "production", "xcu50-fsvh2104-2-e", 6.4; "validation", "xc7a100tcsg324-1", 40. ]
+;;
+
+let%test_unit "resource summary reads UltraScale+ row names as well as series-7" =
+  [%test_result: (string * string * string * string) list]
+    (utilization_rows
+       "| CLB LUTs*     | 8480 | 0 | 0 | 871680 | 0.97 |\n\
+        | CLB Registers | 6949 | 0 | 0 | 1743360 | 0.40 |")
+    ~expect:
+      [ "CLB LUTs", "8480", "871680", "0.97"; "CLB Registers", "6949", "1743360", "0.40" ]
+;;

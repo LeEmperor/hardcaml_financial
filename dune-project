@@ -15,6 +15,7 @@
   (ocaml (>= 5.1))
   (dune (>= 3.17))
   hardcaml
+  hardcaml_networking
   hardcaml_step_testbench
   ppx_expect
   base_quickcheck

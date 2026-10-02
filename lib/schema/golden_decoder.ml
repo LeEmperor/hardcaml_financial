@@ -399,7 +399,7 @@ let enum_valid scalar ~version value =
     candidate = value && since_version <= version)
 ;;
 
-let decode_supported_message t schema bytes packet message body_start message_end =
+let decode_supported_message_known t schema bytes packet message body_start message_end =
   let layout = t.layout in
   let schema_problem offset =
     [ diagnostic packet ~message Diagnostic_code.Schema_incompatibility offset ]
@@ -423,6 +423,9 @@ let decode_supported_message t schema bytes packet message body_start message_en
         read_scalar bytes body_start layout.match_event_indicator |> Int64.to_int_exn
       in
       let message = { message with transaction_time; transaction_time_present = true } in
+      let schema_problem offset =
+        [ diagnostic packet ~message Diagnostic_code.Schema_incompatibility offset ]
+      in
       let dimension_start = body_start + message.block_length in
       let dimension = layout.mbp_dimension in
       if dimension_start + dimension.size > message_end
@@ -541,12 +544,33 @@ let decode_supported_message t schema bytes packet message body_start message_en
               else events)))))
 ;;
 
+let decode_supported_message t schema bytes packet message body_start message_end =
+  let events =
+    decode_supported_message_known t schema bytes packet message body_start message_end
+  in
+  if message.schema_id = t.layout.schema_id
+     && message.schema_version > t.layout.schema_version
+     && message.block_length
+        >= Int.max
+             t.layout.root_block_length
+             (required_end schema t.layout.root_fields message.schema_version)
+     && body_start + message.block_length <= message_end
+  then
+    diagnostic
+      packet
+      ~message
+      Diagnostic_code.Schema_incompatibility
+      (message.packet_byte_offset + 8)
+    :: events
+  else events
+;;
+
 let decode_payload ?(ingress_timestamp = 0L) t bytes =
   let length = String.length bytes in
   if length < 12
   then
     [ diagnostic
-        (empty_packet ~ingress_timestamp ())
+        { (empty_packet ~ingress_timestamp ()) with channel_valid = t.channel_valid }
         Diagnostic_code.Truncated_packet_header
         length
     ]

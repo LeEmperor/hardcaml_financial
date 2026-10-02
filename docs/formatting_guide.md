@@ -7,6 +7,9 @@ hardware modules. It does not require a particular protocol, board, organization
 layout, or toolchain wrapper. An adopting project should record its paths, attribution policy,
 formatter configuration, and verification commands in a separate project conventions document.
 
+A companion guide, [Structuring style](structuring_style.md), covers the interior of a
+module: sequential idiom choice, the region order inside `create`, and internal net naming.
+
 The rules apply primarily to synthesizable modules, wherever the project stores them.
 Testbench-local variables, software-only helpers, and direction-neutral value types follow
 the exceptions described below.

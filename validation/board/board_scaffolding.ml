@@ -6,8 +6,9 @@
    heartbeat LED, and a level synchronizer.
 
    Ported from hardcaml_networking's validation/board_scaffolding.ml so that no CME board
-   code lives in that repository. It sits beside the copies of [Board_top], [Clk_div] and
-   [Second_pulse] already carried in lib/common/.
+   code lives in that repository. [Arty_board_top], [Clk_div] and [Second_pulse] are no
+   longer copied into lib/common/ - they come from the hardcaml_networking opam package,
+   which is their single source of truth.
 
    These are plain helper functions, NOT a Hardcaml sub-module: they build signals
    directly into the caller's circuit, so the caller keeps control over signal-creation
@@ -16,6 +17,8 @@
 open! Core
 open! Hardcaml
 open! Signal
+open! Hardcaml_networking
+open! Common
 
 (* Per-domain reset synchronizer. btn[0] is a raw asynchronous input, so drop it through a
    2-FF chain in the target clock domain: async-assert, sync-deassert. *)
@@ -25,11 +28,12 @@ let reset_sync ~clock ~async_rst =
   Signal.reg spec ~reset_to:(Bits.one 1) ff0
 ;;
 
-(* 25 MHz reference clock to the PHY XI pin. [Clk_div] is a fixed divide-by-four, which is
-   the 100 -> 25 MHz relationship this board needs; the jitter is ugly but irrelevant at
-   MII speeds. Drive eth_ref_clk from [.dst_clk]. *)
+(* 25 MHz reference clock to the PHY XI pin. The jitter is ugly but irrelevant at MII
+   speeds. Drive eth_ref_clk from [.dst_clk]. [divisor] is passed explicitly rather than
+   left to [Clk_div]'s default so the 100 -> 25 MHz relationship is stated at the call
+   site, and so this board's refclk does not move if that default ever changes upstream. *)
 let eth_ref_clk ~scope ~clk100mhz ~sys_rst ~en =
-  Clk_div.create scope { Clk_div.I.src_clk = clk100mhz; rst = sys_rst; en }
+  Clk_div.create ~divisor:4 scope { Clk_div.I.src_clk = clk100mhz; rst = sys_rst; en }
 ;;
 
 module Phy_reset = struct

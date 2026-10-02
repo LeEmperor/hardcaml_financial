@@ -4,7 +4,7 @@
 (* Compact reviewable trace for the independent schema-driven golden decoder. *)
 
 open! Core
-open Schema_fixture
+open Schema_test_support.Schema_fixture
 
 let%expect_test "two entries and end-of-event" =
   let module G = Cme_schema.Golden_decoder in

@@ -3,6 +3,17 @@
 ; Module: "dune"
 ; OCaml RTL generation and optional Yosys hierarchy/Icarus elaboration checks.
 
+(executable
+ (name phase6_structure)
+ (modules phase6_structure)
+ (libraries core hardcaml cme_of_hardcaml)
+ (preprocess (pps ppx_jane)))
+
+(rule
+ (alias runtest)
+ (target phase6_structure.txt)
+ (action (with-stdout-to %{target} (run %{exe:phase6_structure.exe}))))
+
 ; RTL generation is OCaml-only; external checks belong solely to the explicit alias.
 (rule
  (targets
@@ -13,6 +24,7 @@
   cme_sbe_message_iterator.v
   cme_message_pipeline.v
   cme_event_orderer.v
+  cme_mbp_decoder.v
   cme_stream_fixture.v
   cme_mdp3_feed_parser.v)
  (action (run %{exe:../generate_stream_fixture.exe} .)))
@@ -28,6 +40,7 @@
   cme_sbe_message_iterator.v
   cme_message_pipeline.v
   cme_event_orderer.v
+  cme_mbp_decoder.v
   cme_stream_fixture.v
   cme_mdp3_feed_parser.v)
  (action (run bash %{dep:../../../scripts/check-rtl.sh} .)))

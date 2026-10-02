@@ -4,24 +4,22 @@
 # Build the CME feed-parser validation bitstream for the Arty A7-100T.
 # Does not program connected hardware.
 #
-# All sources and constraints belong to this repository. hardcaml_networking contributes
-# one generated Verilog file, staged into validation/vendor by validation/phase7/check.sh,
-# which must be run first.
+# The native Hardcaml generator emits the complete networking/parser/sink hierarchy into
+# one source file. Run validation/phase7/check.sh first.
 if {$argc != 1} {
     error "usage: vivado -mode batch -source validation/phase7/build.tcl -tclargs OUTPUT_DIR"
 }
 set cme_root [file normalize [file join [file dirname [info script]] ../..]]
 set output_dir [file normalize [lindex $argv 0]]
-set network_rtl [file join $cme_root validation/vendor/hardcaml_udp_rx_64_with_mac.v]
-if {![file exists $network_rtl]} {
-    error "missing $network_rtl -- run validation/phase7/check.sh first"
+set rtl [file join $cme_root cme_feed_parser_validation_harness_arty.v]
+if {![file exists $rtl]} {
+    error "missing $rtl -- run validation/phase7/check.sh first"
 }
 file mkdir $output_dir
 create_project -in_memory -part xc7a100tcsg324-1
-read_verilog [file join $cme_root cme_board_top.v]
-read_verilog $network_rtl
+read_verilog $rtl
 read_xdc [file join $cme_root validation/constraints/cme_arty.xdc]
-synth_design -top cme_board_top -part xc7a100tcsg324-1
+synth_design -top cme_feed_parser_validation_harness_arty -part xc7a100tcsg324-1
 opt_design
 place_design
 route_design
@@ -37,6 +35,6 @@ foreach delay_type {max min} {
         error "Board timing incomplete or failing ($delay_type); inspect saved reports"
     }
 }
-write_bitstream -force [file join $output_dir cme_board_top.bit]
+write_bitstream -force [file join $output_dir cme_feed_parser_validation_harness_arty.bit]
 puts "Arty xc7a100tcsg324-1, parser clock eth_tx_clk 25 MHz. Board capture still required."
-puts "NOTE: validation/constraints/cme_arty.xdc still carries placeholder MII input delays."
+puts "MII RX timing uses DP83848J T2.5.2 (10/30 ns); PCB clock/data skew is not included."

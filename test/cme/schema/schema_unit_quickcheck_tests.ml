@@ -4,7 +4,7 @@
 (* Schema pin, generated descriptor, golden decoder, and schema-valid random fixtures. *)
 
 open! Core
-open Schema_fixture
+open Schema_test_support.Schema_fixture
 module G = Cme_schema.Golden_decoder
 
 let decoder () = G.create ~schema_file
@@ -40,6 +40,10 @@ let%test_unit "pinned metadata and generated descriptor agree with hand-reviewed
   [%test_result: int list]
     D.Entry_type.valid_values
     ~expect:(List.map [ '0'; '1'; 'E'; 'F'; 'J'; 'w'; 'x' ] ~f:Char.to_int);
+  [%test_result: (int * int) list]
+    (List.filter D.Entry_type.valid_values_since_version ~f:(fun (_, version) ->
+       version > 0))
+    ~expect:[ Char.to_int 'w', 12; Char.to_int 'x', 12 ];
   [%test_result: int list]
     [ D.Transact_time.offset
     ; D.Match_event_indicator.offset
@@ -128,7 +132,13 @@ let%test_unit "runtime blocks, version 9 omissions, appended fields, and MBO ski
   in
   [%test_result: int64 list]
     (List.map (updates newer) ~f:(fun update -> update.rpt_seq))
-    ~expect:[ 7L; 8L ]
+    ~expect:[ 7L; 8L ];
+  match newer with
+  | G.Diagnostic d :: _ ->
+    [%test_result: G.Diagnostic_code.t * int * bool]
+      (d.code, d.byte_offset, (Option.value_exn d.message).transaction_time_present)
+      ~expect:(Schema_incompatibility, 20, false)
+  | _ -> failwith "newer versions must warn before decoding"
 ;;
 
 let%test_unit "all nullable fields distinguish sentinels from signed minima" =

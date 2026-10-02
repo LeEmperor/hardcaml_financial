@@ -12,6 +12,13 @@ let diagnostics o =
     | _ -> None)
 ;;
 
+let%test_unit "phase6 regression: a prefix at offset seven spans three input beats" =
+  let bytes = message "abcde" ^ message ~block:3 "xyz" in
+  List.iter [ false; true ] ~f:(fun stalls ->
+    let result = Tiny.run ~stalls [ packet 1L bytes ] in
+    [%test_result: int] (List.length result.items) ~expect:2)
+;;
+
 let%test_unit "literal asymmetric prefix and high-bit fields" =
   let o = run ~stalls:false [ packet 1L "\x0d\x00\x03\x00\x76\x98\x34\x12\xcd\xabxyz" ] in
   match o.items with

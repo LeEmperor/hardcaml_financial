@@ -119,16 +119,18 @@ must include the validation below and the command must be registered under a
 CLI name such as `cme-feed-parser`. The empty primitive list follows networking's
 Artix-7 workaround; reconsider it for other devices after validating counts.
 
-Current CLI targets are `ingress-fifo` (depth 64), `event-fifo` (depth 16),
-`byte-aligner`, `stream-foundation` (ingress depth 64 plus aligner), and
-`cme-feed-parser` (inactive skeleton). Parameters are fixed in the adapters and
-printed with each invocation. Add architectural parser paths and the complete
-parser as they become available.
+Current CLI targets are `ingress-fifo` (depth 65), `event-fifo` (depth 16),
+`byte-aligner`, `byte-aligner-registered` (the same aligner with every top-level
+port registered; see [port registration](#registering-ports-for-trustworthy-out-of-context-timing)),
+`stream-foundation` (ingress depth 65 plus aligner),
+`mbp-decoder` (template 46), and `cme-feed-parser` (active Phase 5 integration).
+Parameters are fixed in the adapters and printed with each invocation.
 Fix optional parameters such as FIFO depth in explicit adapters matching the
 typed interface. Record those parameters with the result. Reporting the
-inactive Phase 0 top is only a generator smoke test, not useful parser area or
-throughput evidence. Select hardware primitive implementations for synthesis
-if any future DUT offers separate simulation models.
+historical inactive Phase 0 top was only a generator smoke test; those old results
+are not area or throughput evidence for the active parser. Select hardware
+primitive implementations for synthesis if any future DUT offers separate
+simulation models.
 
 ## Preserve hierarchy through circuit construction
 
@@ -170,42 +172,59 @@ implemented Phase 1 target for meaningful hardware smoke evidence.
 ./scripts/with-switch.sh dune exec synthesis/xilinx_reports.exe -- cme-feed-parser -help
 ```
 
-Example project generation with no Vivado invocation, using networking's
-Artix-7 part only as a functional-platform example:
+### The device is a profile, not a part flag
+
+The upstream `-part` and `-clock` flags are **not exposed**. `report_command`
+passes its own empty parameters for both and overwrites the fields from a single
+required `-profile` flag, defined in `Report_support.Profile`:
+
+| `-profile` | Part | Clock | What a number from it establishes |
+| --- | --- | --- | --- |
+| `production` | `xcu50-fsvh2104-2-e` | `clock_i` at 156.25 MHz (6.400 ns) | 10G timing closure; the only profile that can |
+| `validation` | `xc7a100tcsg324-1` | `clock_i` at 25 MHz (40.000 ns) | Arty A7-100T board acceptance; nothing about throughput |
+
+This is a deliberate loss of expressiveness. Phases 0-6 recorded every device
+number at `-part xc7a100tcsg324-1 -clock clock_i:156.25` — the validation part
+held to the production clock, an operating point nobody deploys — and the pair
+drifting apart is exactly what the single flag prevents. Restoring an override
+restores the drift. See [retargeting.md](retargeting.md).
+
+The chosen part and clock are printed at the head of every invocation and again
+beside every report summary, so a pasted result always names both.
+
+Example project generation with no Vivado invocation:
 
 ```sh
 ./scripts/with-switch.sh dune exec synthesis/xilinx_reports.exe -- cme-feed-parser \
   -dir _build/xilinx-reports/dry-run \
-  -part xc7a100tcsg324-1 \
-  -clock clock_i:25 \
+  -profile validation \
   -full-design-hierarchy true
 ```
 
-For a timing-oriented run against a deliberately selected part, set
-`REPORT_PART` to its full device identifier, then run:
+A full timing run on the deployment part, through place and route:
 
 ```sh
 ./scripts/with-switch.sh dune exec synthesis/xilinx_reports.exe -- cme-feed-parser \
-  -dir _build/xilinx-reports/timing \
-  -part "${REPORT_PART:?Set REPORT_PART to the chosen FPGA part}" \
-  -clock clock_i:156.25 \
-  -hierarchy \
+  -dir reports/production \
+  -profile production \
   -full-design-hierarchy true \
   -jobs 1 \
+  -place -route \
+  -path-to-vivado /path/to/Vivado/bin/vivado \
   -run
 ```
 
-`-clock` takes `port_name:frequency_in_MHz`; use the actual `clock_i` port,
-not networking's leaf `clock` name. A 156.25 MHz constraint tests the intended
-application frequency; it does not establish that the chosen device meets it.
-For local resource attribution, change the output directory to
-`_build/xilinx-reports/resources` and use `-full-design-hierarchy false`.
+Omit `-place -route` for a post-synthesis number. Note that out-of-context
+post-synthesis routing is an *estimate*: on a design at 1% utilisation roughly
+70% of the data path delay is unplaced, so only a routed run is a closure claim.
+
+For local resource attribution, use `-full-design-hierarchy false`.
 
 Add `-full-report` to print full standard reports. Add `-path-to-vivado /path/to/Vivado/bin/vivado` if needed. Start
 with explicit `-jobs 1`: despite help text mentioning one, the inspected
 hierarchical runner uses eight concurrent jobs when the option is absent.
-For future multi-clock targets, repeat `-clock` for each real clock port and
-retain the limitations below.
+A multi-clock target would need `Profile.clock` to return a list; the single
+`clock_i` port every interface in this design declares is why it does not.
 
 ## Report validation is part of the command
 
@@ -241,6 +260,221 @@ before reusing its resource-row parser on another FPGA family. A completed
 report run with negative slack is still a timing failure; artifact freshness
 does not check timing acceptance.
 
+## Library sharp edges
+
+Read against the local reports checkout at
+`932c3b769a0eacf8c8a17ae42d8fe3c437ac5d0f`; line references are to that commit.
+These are properties of the inspected library, not of this repository's wrapper.
+Each one can turn a failed or meaningless run into something that reads as a
+passing result, so treat them as review items whenever a report is cited.
+
+### A submodule whose clock port is named differently is silently unconstrained
+
+`hierarchical_projects` filters the `-clock` list per circuit by matching the
+clock name against that circuit's *input port names*
+([command.ml:246-249](../../hardcaml_xilinx_reports/src/command.ml)). A circuit
+with no matching port gets an XDC with no `create_clock` at all. The timing
+query then finds no clock, leaves `setup` and `hold` at the `0` they were
+initialized to ([project.ml:113](../../hardcaml_xilinx_reports/src/project.ml)),
+and prints `0/0` — indistinguishable from a path that met its constraint
+exactly. This is the mechanism behind the earlier instruction to check each
+generated XDC. Under `-hierarchy`, check every project's XDC, not just the top.
+
+### A failed Vivado run prints dashes, not an error
+
+`Project.run` returns `None` when the Vivado subprocess exits non-zero
+([project.ml:314-326](../../hardcaml_xilinx_reports/src/project.ml)), and
+`hierarchical_run_and_print` renders that row as `-` in both tables. Nothing
+raises. This repository's `require_refreshed_artifacts` and
+`read_required_report` in [report_support.ml](../synthesis/report_support.ml)
+exist for exactly this reason, and they cover the *selected target only*; a
+`-hierarchy` sweep can still contain silently failed child projects.
+
+The most common way to trigger this is simply not having Vivado on `PATH`.
+`Project.run` shells out to the bare string `vivado` through `Unix.system`, so
+the failure surfaces as `/bin/sh: 1: vivado: not found`, followed by
+`Completed project for …` for every target and a results table with no data
+columns at all — and, in the upstream library alone, a zero exit status. Either
+export the tool environment first, or pass the interpreter explicitly:
+
+```sh
+source /path/to/Vivado/settings64.sh
+# or, equivalently and without touching the shell environment:
+./scripts/with-switch.sh dune exec synthesis/xilinx_reports.exe -- <target> \
+  -path-to-vivado /path/to/Vivado/bin/vivado ...
+```
+
+The `bin/vivado` launcher sets up its own `XILINX_VIVADO` and library paths, so
+the `-path-to-vivado` form needs no prior sourcing. A table whose only column is
+`NAME` means no report was read for any project; treat it as a failed run.
+
+### `Command.command_circuit` generates nothing without `-run`
+
+`run_circuit` wraps its entire body in `if run then …`
+([command.ml:352](../../hardcaml_xilinx_reports/src/command.ml)), then tests
+`run` a second time inside ([command.ml:378](../../hardcaml_xilinx_reports/src/command.ml)).
+Dry generation via that entry point is a no-op. `With_interface.run` does not
+have this shape — it always writes the project and gates only the Vivado
+invocation ([command.ml:453](../../hardcaml_xilinx_reports/src/command.ml)).
+This repository uses `With_interface` for every target, which is why its
+dry-run flow works; do not switch a target to `command_circuit` expecting
+`-dir` output without `-run`.
+
+### Timing evidence is one path per clock, same-clock only
+
+`query_timing` asks for `-from $clock -to $clock -max_paths 1 -nworst 1`, once
+for setup and once for hold
+([project.ml:107-135](../../hardcaml_xilinx_reports/src/project.ml)). There is
+no path listing, no endpoint detail, and no cross-clock coverage. The compact
+report answers "what is the worst same-clock slack"; it cannot answer "where"
+or "how many failing endpoints". Use `-full-report` and the standard
+`report_timing_summary` artifact for anything beyond the single number.
+
+### Retiming is on by default
+
+Synthesis sets `synRetiming true` unless `-disable-retiming` is passed
+([project.ml:172-177](../../hardcaml_xilinx_reports/src/project.ml)). Reported
+slack therefore reflects register retiming across the design, which may not
+match a hand-analyzed pipeline stage. When a result is used to justify a
+specific pipeline depth, record whether retiming was enabled and consider
+reporting both.
+
+### `-route` without `-place` is ignored
+
+Routing is emitted only inside the `place` branch
+([project.ml:228-236](../../hardcaml_xilinx_reports/src/project.ml)), matching
+the flag's own help text. `report_support.ml` already resolves the stage name
+the same way, so an accidental `-route`-only invocation is reported as
+`post_synth` rather than failing.
+
+### The generated XDC has a two-line vocabulary, and no external XDC can be read
+
+`write_xdc` emits `create_clock` per clock plus an optional
+`set_property HD.CLK_SRC` for a BUFG location, and nothing else
+([project.ml:33-56](../../hardcaml_xilinx_reports/src/project.ml)).
+`Project.create` accepts `~clocks` and has no constraint-file parameter, so an
+existing board XDC cannot be imported: no `set_input_delay`/`set_output_delay`,
+no false paths, no multicycle paths, no clock groups, no pin locations, no I/O
+standards. Combined with `synth_design -mode out_of_context`
+([project.ml:180-184](../../hardcaml_xilinx_reports/src/project.ml)), this makes
+every port-touching path unconstrained; see the next section for the intended
+mitigation. There is no `write_bitstream` anywhere in the library — even a
+`-place -route` run is characterization, not a board build.
+
+### Compact primitive-group counts target UltraScale
+
+`Primitive_group` documents itself as an UltraScale taxonomy (ug974) and
+compiles to `get_cells -filter {PRIMITIVE_GROUP == …}` queries. On this
+project's Artix-7 part those properties populate differently, which is why every
+target here passes `~primitive_groups:[]` and `report_support.ml` forces
+`reports = true` and parses the standard utilization report instead. A compact
+report from these targets therefore contains `TIMING` lines only; that is
+expected, not a truncated file.
+
+## Registering ports for trustworthy out-of-context timing
+
+Because the generated XDC cannot carry I/O delays and synthesis is always
+out-of-context, any timing path that begins or ends at a top-level port is
+unconstrained. The reported slack silently ignores the combinational cone from
+an input pin to the first flop, and from the last flop to an output pin. For a
+module whose cost is concentrated in such a cone — the aligner's `byte_count`
+priority encoder is the case that motivated this — the bare number is not
+evidence.
+
+`Wrap_with_registers` is the library's intended substitute. `Make_sequential`
+takes an input interface extended with `get_clock`/`set_clock`, registers every
+input and output port except the clock, and returns a create function with the
+same `I`/`O` signature
+([wrap_with_registers.ml:51-71](../../hardcaml_xilinx_reports/src/wrap_with_registers.ml)).
+The `byte-aligner-registered` target in
+[synthesis/xilinx_reports.ml](../synthesis/xilinx_reports.ml) applies it over
+`Byte_aligner.hierarchical`, so the top-level circuit is the registered wrapper
+and the real aligner remains a hierarchy child. The wrapper keeps the port name
+`clock_i`, so both projects match the `-clock clock_i:…` filter described above.
+
+Run it with `-hierarchy -full-design-hierarchy true` to get both readings in one
+table: the wrapper row is flop-to-flop timing through the aligner, and the
+`cme_byte_aligner` child row is the same logic synthesized standalone with
+unconstrained ports. Compare them rather than quoting either alone. Registers
+added by the wrapper are part of the wrapper's own resource counts, so use the
+unwrapped `byte-aligner` target for area attribution.
+
+### Recorded aligner result
+
+Source revision: working tree at `988d009` plus the `byte-aligner-registered`
+target. Tooling: Vivado v2025.2.1, OCaml `5.2.0+ox`, reports library
+`932c3b769a0eacf8c8a17ae42d8fe3c437ac5d0f`. Device `xc7a100tcsg324-1`,
+constraint `-clock clock_i:156.25` (6.400 ns), `max_consume = 8`,
+`-full-design-hierarchy true`, retiming left enabled.
+
+| Circuit | Stage | Worst setup | Worst hold | LUTs | FFs |
+| --- | --- | --- | --- | --- | --- |
+| `cme_byte_aligner_registered` | post-synth | -0.131 ns | 0.260 ns | 775 | 720 |
+| `cme_byte_aligner` (standalone) | post-synth | -0.154 ns | 0.267 ns | 800 | 356 |
+| `cme_byte_aligner_registered` | post-route | -0.080 ns | 0.130 ns | 780 | 720 |
+| `cme_byte_aligner` (standalone) | post-route | -0.481 ns | 0.177 ns | 786 | 356 |
+
+The wrapper's 720 registers are 356 core flops plus 364 wrapper flops (146
+input bits and 218 output bits), which is the expected exact total.
+
+Two conclusions. First, **the aligner does not meet 156.25 MHz on this part in
+any of the four configurations**; the best reading is the routed wrapper at
+-0.080 ns, about 154.3 MHz. This does not contradict a passing Arty build at a
+lower application clock, but it is not evidence for the 10G-oriented frequency.
+
+> This is the reading that should have prompted the target audit in
+> [retargeting.md](retargeting.md). An 800-LUT, seven-level leaf module sitting at
+> −0.080 ns is the part talking, not the module: a 9,000-LUT design at 23 levels
+> was never going to close on `xc7a100tcsg324-1` at 156.25 MHz no matter how it
+> was written. The full parser meets that clock on the deployment part
+> `xcu50-fsvh2104-2-e` at WNS +0.340 ns. Note also that these figures are the
+> **two-slot** aligner; Phase 6 added a third and the module has not been
+> re-measured.
+Second, **port registration was not what the earlier numbers were missing.**
+Every critical path in all four runs is internal register-to-register and ends
+at a *clock-enable* pin of the slot registers:
+
+| Run | Source | Destination | Levels |
+| --- | --- | --- | --- |
+| wrapped, post-synth | `slot0_bytes_reg[0]/C` | `slot0_bytes_reg[0]/CE` | 6 |
+| standalone, post-synth | `slot0_bytes_reg[0]/C` | `slot0_bytes_reg[0]/CE` | 6 |
+| wrapped, post-route | `offset_reg[0]/C` | `slot0_reg[121]/CE` | 6 |
+| standalone, post-route | `occupied_slot_count_reg[0]/C` | `slot0_reg[124]/CE` | 6 |
+
+The bottleneck is the enable cone — the consume/offset/occupancy decode that
+gates the slot registers — not the `byte_count` priority encoder in isolation
+and not any port path. The `en_i` gating noted as provisional in
+[byte_aligner.ml](../lib/cme/byte_aligner.ml) is part of that cone; removing or
+pipelining it is the change these numbers point at. Routing is 78-81% of the
+data path delay in every run, so this is a congestion/fanout problem on the
+enable nets rather than deep logic: all four runs report only six logic levels.
+
+The standalone circuit routing *worse* than the wrapped one (-0.481 vs -0.080)
+is placement variance on an out-of-context block with unconstrained ports and
+fewer anchoring flops; it is a reason to quote the wrapped routed number and
+not the standalone one.
+
+One operational note from this run, and a concrete instance of the silent
+failure described above: under `-jobs 2` with `-place -route`, the
+`cme_byte_aligner` child project crashed Vivado outright -- an
+`hs_err_pid*.log` in the invocation directory recording
+`An unexpected error has occurred (7) Bus error` inside `libxv_commontasks.so`.
+The child left only its `.tcl`, `.v` and `.xdc` behind, its table row printed
+`-`, and **the command still exited 0**. The wrapper's artifact validation did
+not catch it because that validation covers the selected target only, and the
+selected target succeeded.
+
+Re-running the child's generated Tcl alone from the repository root completed
+without error, and a subsequent full sweep with `-jobs 1` completed both
+projects cleanly and reproduced the same routed numbers to the digit
+(-0.080/0.130 for the wrapper, -0.481/0.177 for the child). The crash was
+therefore resource contention between two concurrent place-and-route jobs, not
+a defect in the emitted project. Two practical rules follow: use `-jobs 1` for
+place-and-route sweeps, and under `-hierarchy` confirm every project wrote a
+`<stage>_report.txt` before citing any row. Note also that Vivado writes
+`clockInfo.txt` and any `hs_err_pid*.log` into the *invocation* directory, not
+the output directory, so run from a scratch directory or clean them up.
+
 ## Acceptance and limits
 
 Keep generated projects, reports, and logs under `_build/xilinx-reports/`.
@@ -256,7 +490,7 @@ board pin assignments, I/O delays, asynchronous clock groups, or a complete
 CDC/signoff constraint set. Even placed/routed out-of-context reports do not
 replace integrated board timing closure, CDC analysis, DRC, or bitstream checks.
 
-The parser plan's Phase 6 still needs independent evidence for functional
+The parser plan's Phase 6 requires independent evidence for functional
 conformance, one accepted 64-bit beat per cycle under the stated conditions,
 the eight-cycle event latency bound, complete RTL hierarchy, combinational
 loop checks, and review for unintended wide muxes. OCaml circuit inspection
@@ -269,3 +503,23 @@ generation, backend smoke, failure handling, and independent functional test
 evidence for this implementation. If device tools
 or the final 10GbE target are unavailable, record that missing evidence without
 substituting a different toolchain or presenting a smoke run as signoff.
+
+## Current full-parser Phase 6 evidence
+
+The resumed [Phase 6 verification record](phase6_verification.md#device-evidence)
+contains a fresh inclusive full-parser run with Vivado 2025.2.1, target
+`xc7a100tcsg324-1`, and `clock_i:156.25`. Post-synthesis resource use is 8,014
+LUTs, 7,609 flip-flops, 11.5 BRAM tiles, and nine DSPs. Worst setup slack is
+**−16.428 ns**: this full parser does not meet the target clock. The measured
+critical path crosses from decoder message context through the upstream ready
+chain to the ingress BRAM read address. Standalone aligner results above do not
+close that full-parser path. Exact commands, source hashes, report paths, and
+unconstrained I/O limits are recorded in the linked verification document.
+
+**That part is the validation target, not the deployment target.** The current
+tree meets `clock_i:156.25` on `xcu50-fsvh2104-2-e` at WNS +0.340 ns, TNS 0.000,
+zero failing endpoints of 14,124, using 0.97% of its LUTs and 1.75% of its block
+RAM. Two reporting profiles are now standing — production closure on the U50 at
+156.25 MHz, functional validation on `xc7a100tcsg324-1` at 25 MHz — and every
+recorded number must name both its part and its clock. See
+[retargeting.md](retargeting.md).

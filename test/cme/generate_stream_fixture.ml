@@ -86,5 +86,11 @@ let () =
     "cme_event_orderer"
     (C.create_exn ~name:"cme_event_orderer" (Event_orderer.create scope))
     scope;
+  let scope = Scope.create ~flatten_design:false () in
+  let module C = Circuit.With_interface (Mbp_decoder.I) (Mbp_decoder.O) in
+  emit
+    "cme_mbp_decoder"
+    (C.create_exn ~name:"cme_mbp_decoder" (Mbp_decoder.create scope))
+    scope;
   ()
 ;;

@@ -21,6 +21,13 @@ let emit_scalar buffer name scalar =
     buffer
     "  let valid_values = [ %s ]\n"
     (String.concat ~sep:"; " (List.map scalar.valid_values ~f:Int.to_string));
+  bprintf
+    buffer
+    "  let valid_values_since_version = [ %s ]\n"
+    (String.concat
+       ~sep:"; "
+       (List.map scalar.valid_values_since_version ~f:(fun (value, version) ->
+          sprintf "(%d, %d)" value version)));
   bprintf buffer "end\n\n"
 ;;
 

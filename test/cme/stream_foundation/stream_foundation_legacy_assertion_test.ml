@@ -291,6 +291,8 @@ type byte =
   ; last : bool
   ; offset : int
   ; timestamp : Bits.t
+  ; (* Which accepted beat carried this byte; only the two leading beats are visible. *)
+    beat : int
   }
 
 let test_aligner () =
@@ -303,6 +305,7 @@ let test_aligner () =
   let todo, pending = ref source, ref None in
   let expected = Queue.create () in
   let input_offset = ref 0 in
+  let input_beat = ref 0 in
   let current_timestamp = ref (Bits.zero 64) in
   let offsets = Array.create ~len:8 false in
   let counts = Array.create ~len:9 false in
@@ -340,7 +343,18 @@ let test_aligner () =
       | [] -> []
       | b :: rest -> b :: (if b.last then [] else current_packet rest)
     in
-    let window = current_packet (Queue.to_list expected) in
+    (* slot2 is storage behind the window: only the head beat and, when the head is not
+       the packet's last beat, the one behind it can be peeked. *)
+    let resident =
+      List.group (Queue.to_list expected) ~break:(fun a b -> a.beat <> b.beat)
+    in
+    let visible =
+      match resident with
+      | [] -> []
+      | [ head ] -> head
+      | head :: tail :: _ -> head @ tail
+    in
+    let window = current_packet visible in
     let available = List.length window in
     let request = Random.State.int random (1 + Int.min 8 available) in
     let command_valid = !cycle >= 60 && not (chance 3) in
@@ -415,8 +429,10 @@ let test_aligner () =
           ; last = offered.last && n = String.length s - 1
           ; offset = !input_offset + n
           ; timestamp = !current_timestamp
+          ; beat = !input_beat
           });
       input_offset := !input_offset + String.length s;
+      incr input_beat;
       todo := List.tl_exn !todo;
       pending := None);
     let held_offset, held_data = !(o.packet_byte_offset_o), !(o.data_o) in

@@ -17,6 +17,8 @@ _build/
 *.exe
 *.bc
 /cme_mdp3_feed_parser.v
+/cme_feed_parser_validation_harness_arty.v
+/cme_feed_parser_validation_harness_arty_sim.v
 /uart_test_top.v
 
 # waveforms

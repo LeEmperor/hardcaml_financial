@@ -1,53 +1,41 @@
 // University of Florida
 // Author: Bohdan Purtell
 // Module: "mii_testbench.sv"
-// Real generated async receive FIFO, independent MII clocks, parser and UART checks.
+// Full native board top: MII nibbles through MAC/IPv4/UDP, parser, sink and UART.
 //
-// This is the board-level gate: everything from MII nibbles to the UART pin, elaborated
-// from the same generated RTL the bitstream is built from. It complements rather than
-// duplicates dune runtest, which covers the CME datapath cycle-accurately but cannot
-// reach the networking stack (an external Verilog instantiation) or the MII clocking.
-//
-// The DUT is cme_validation_core_sim: the board datapath with the UART divisors collapsed
-// so complete status records appear within the simulation. Counter behaviour is identical
-// to the board build.
+// The simulation DUT is generated from the exact board-top create function with only the
+// UART divisor and snapshot interval shortened. Every functional instance and connection is
+// therefore shared with the synthesizable cme_feed_parser_validation_harness_arty top.
 `timescale 1ns/1ps
 module mii_testbench;
-    reg rx_clock = 0, clock = 0;
+    reg clk100mhz = 0, rx_clock = 0, tx_clock = 0;
+    always #5 clk100mhz = !clk100mhz;
     always #20 rx_clock = !rx_clock;
-    initial begin #7; forever #20 clock = !clock; end
-    reg reset = 1, en = 1, rx_dv = 0;
+    initial begin #7; forever #20 tx_clock = !tx_clock; end
+
+    reg [3:0] btn = 4'b0001, sw = 4'b0001;
+    reg rx_dv = 0;
     reg [3:0] rx_data = 0;
-    wire [63:0] data;
-    wire [7:0] keep;
-    wire valid, first, last, ready, frame_done, crc_error, checksum_ok;
-    wire [15:0] dst_port;
-    wire [255:0] counters;
+    wire [3:0] led;
     wire uart;
-    udp_rx_64_mac_top network (
-        .rx_clock_i(rx_clock), .rx_reset_i(reset), .rx_dv_i(rx_dv),
-        .rx_er_i(1'b0), .rx_data_i(rx_data), .tx_clock_i(clock),
-        .tx_reset_i(reset), .en_i(en), .app_tready_i(ready),
-        .app_tdata_o(data), .app_tkeep_o(keep), .app_tvalid_o(valid),
-        .app_tfirst_o(first), .app_tlast_o(last), .dst_port_o(dst_port),
-        .rx_frame_done_o(frame_done), .crc_error_o(crc_error), .checksum_ok_o(checksum_ok)
+    wire eth_mdc, eth_rstn, eth_ref_clk, eth_tx_en;
+    wire [3:0] eth_txd;
+
+    cme_feed_parser_validation_harness_arty_sim dut (
+        .clk100mhz(clk100mhz), .sw(sw), .btn(btn), .uart_txd_in(1'b1),
+        .eth_col(1'b0), .eth_crs(1'b0), .eth_rx_dv(rx_dv), .eth_rxd(rx_data),
+        .eth_rxerr(1'b0), .eth_tx_clk(tx_clock), .eth_rx_clk(rx_clock),
+        .led(led), .uart_rxd_out(uart), .eth_mdc(eth_mdc), .eth_rstn(eth_rstn),
+        .eth_ref_clk(eth_ref_clk), .eth_tx_en(eth_tx_en), .eth_txd(eth_txd)
     );
-    cme_validation_core_sim core (
-        .clock_i(clock), .reset_i(reset), .en_i(en), .data_i(data), .keep_i(keep),
-        .valid_i(valid), .first_i(first), .last_i(last), .dst_port_i(dst_port),
-        .rx_frame_done_i(frame_done), .crc_error_i(crc_error), .checksum_ok_i(checksum_ok),
-        .display_i(3'b0), .ready_o(ready), .uart_o(uart), .counters_o(counters)
-    );
-    // Capture the independent byte protocol at bit centres, including start/stop bits.
-    // Nothing here reaches inside the DUT: the record is recovered from the pin exactly
-    // as board_cases.py recovers it from the serial device.
-    reg [287:0] uart_record;
+
+    // Decode the independent pin protocol at bit centres, including start and stop bits.
+    reg [287:0] uart_record = 0;
     reg [7:0] uart_byte;
     integer byte_no, bit_no, uart_records = 0;
-    reg [255:0] record_counters;
-    reg [255:0] previous_record;
+    reg [255:0] record_counters = 0;
+    reg [255:0] previous_record = 0;
     initial begin
-        previous_record = 0;
         forever begin
             for (byte_no = 0; byte_no < 36; byte_no = byte_no + 1) begin
                 @(negedge uart);
@@ -63,11 +51,9 @@ module mii_testbench;
             end
             if (uart_record[31:0] !== 32'h37454d43) $fatal(1, "UART magic");
             record_counters = uart_record[287:32];
-            // Counters only ever rise, so a record that reports less than an earlier one
-            // was assembled from more than one sample point. Per-counter atomicity is
-            // proven exhaustively by the OCaml sink suite; this is the board-path echo.
             for (bit_no = 0; bit_no < 8; bit_no = bit_no + 1)
-                if (record_counters[bit_no*32 +: 32] < previous_record[bit_no*32 +: 32])
+                if (record_counters[bit_no*32 +: 32]
+                    < previous_record[bit_no*32 +: 32])
                     $fatal(1, "UART record went backwards on counter %0d", bit_no);
             previous_record = record_counters;
             uart_records = uart_records + 1;
@@ -75,16 +61,33 @@ module mii_testbench;
     end
 
     integer fd, rc, frame_len, value, j, k, case_no = 0;
+    integer records_before;
     reg [31:0] expected [0:7];
-    reg [255:0] frozen;
+    reg [255:0] expected_flat;
+
+    task wait_for_expected;
+        input integer prior_records;
+        integer cycles;
+        begin : wait_block
+            for (cycles = 0; cycles < 6000; cycles = cycles + 1) begin
+                @(negedge tx_clock);
+                if (uart_records > prior_records && record_counters === expected_flat)
+                    disable wait_block;
+            end
+            $fatal(1, "no UART record matched expected counters after record %0d",
+                   prior_records);
+        end
+    endtask
+
     initial begin
         repeat (10) @(negedge rx_clock);
-        reset = 0;
+        btn = 0;
         repeat (20) @(negedge rx_clock);
         fd = $fopen("mii_vectors.txt", "r");
         if (!fd) $fatal(1, "missing vectors");
         rc = $fscanf(fd, "%h", frame_len);
         while (rc == 1) begin
+            records_before = uart_records;
             for (j = 0; j < frame_len; j = j + 1) begin
                 rc = $fscanf(fd, "%h", value);
                 if (rc != 1) $fatal(1, "truncated frame");
@@ -92,15 +95,15 @@ module mii_testbench;
                 @(negedge rx_clock); rx_data = value[7:4];
             end
             @(negedge rx_clock); rx_dv = 0; rx_data = 0;
+            expected_flat = 0;
             for (k = 0; k < 8; k = k + 1) begin
                 rc = $fscanf(fd, "%h", expected[k]);
                 if (rc != 1) $fatal(1, "truncated expectation");
+                expected_flat[k*32 +: 32] = expected[k];
             end
-            repeat (1000) @(negedge clock);
-            for (k = 0; k < 8; k = k + 1)
-                if (counters[k*32 +: 32] !== expected[k])
-                    $fatal(1, "case %0d counter %0d got %0d expected %0d", case_no,
-                           k, counters[k*32 +: 32], expected[k]);
+            wait_for_expected(records_before);
+            if (led !== expected[0][3:0])
+                $fatal(1, "packet-counter LED got %0d expected %0d", led, expected[0][3:0]);
             $display("PASS MII case %0d packets=%0d updates=%0d ends=%0d diagnostics=%0d crc=%0d ip=%0d gaps=%0d duplicates=%0d",
                 case_no, expected[0], expected[1], expected[2], expected[3],
                 expected[4], expected[5], expected[6], expected[7]);
@@ -109,16 +112,30 @@ module mii_testbench;
         end
         $fclose(fd);
         if (case_no != 9) $fatal(1, "wrong vector count");
-        frozen = counters;
-        en = 0;
-        repeat (3000) @(negedge clock);
-        if (counters !== frozen || ready !== 0) $fatal(1, "disabled sink changed");
-        if (uart_records < 2) $fatal(1, "no complete UART observations");
-        reset = 1;
-        repeat (5) @(negedge clock);
-        if (counters !== 0 || uart !== 1) $fatal(1, "reset must override enable");
+
+        // Disable is synchronized into the application domain. Counters freeze while the
+        // UART continues emitting complete, identical snapshots.
+        sw = 0;
+        repeat (10) @(negedge tx_clock);
+        records_before = uart_records;
+        wait_for_expected(records_before);
+        records_before = uart_records;
+        wait_for_expected(records_before);
+
+        // Reset overrides disabled enable. Release reset and re-enable, then require a
+        // complete all-zero record from the same board output pin.
+        previous_record = 0;
+        btn = 4'b0001;
+        repeat (10) @(negedge tx_clock);
+        if (uart !== 1) $fatal(1, "reset must return UART to idle");
+        btn = 0;
+        sw = 4'b0001;
+        expected_flat = 0;
+        records_before = uart_records;
+        wait_for_expected(records_before);
         $display("PASS atomic UART records=%0d; disabled/reset checks", uart_records);
         $finish;
     end
-    initial begin #2000000; $fatal(1, "simulation timeout"); end
+
+    initial begin #4000000; $fatal(1, "simulation timeout"); end
 endmodule

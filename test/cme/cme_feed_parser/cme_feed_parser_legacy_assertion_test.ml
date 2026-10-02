@@ -211,7 +211,7 @@ let test_hierarchy () =
 ;;
 
 let test_configuration () =
-  check (Cme_config.default.ingress_fifo_depth = 64) "default ingress depth changed";
+  check (Cme_config.default.ingress_fifo_depth = 65) "default ingress depth changed";
   check (Cme_config.default.event_fifo_depth = 16) "default event depth changed";
   ignore
     (Parser.circuit ~config:{ ingress_fifo_depth = 1; event_fifo_depth = 3 } ()

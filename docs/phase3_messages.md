@@ -54,7 +54,9 @@ accepted by ordered storage. Transaction time and its presence flag remain zero
 at this seam because the iterator interprets no template body fields.
 
 The iterator retains one packet context, a prefix collector, length/state
-registers, a diagnostic register, a two-beat aligner, and one elastic output item.
+registers, a diagnostic register, a two-beat aligner, and two effective elastic
+output items (a depth-3 FIFO, since non-greedy admission cannot refill the slot
+it drains).
 It does not accept the next packet's start or diagnostic into the aligner while
 processing the current packet. The output register may own the prior packet's
 last item while processing begins on the next packet. Each queued item carries

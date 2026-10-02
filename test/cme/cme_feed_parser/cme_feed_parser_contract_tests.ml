@@ -131,18 +131,32 @@ let test_hierarchy () =
   in
   check
     (String.is_substring rtl ~substring:"module cme_mdp3_feed_parser (")
-    "hierarchy omitted parser implementation"
+    "hierarchy omitted parser implementation";
+  List.iter
+    [ "cme_message_pipeline"
+    ; "cme_packet_pipeline"
+    ; "cme_sbe_message_iterator"
+    ; "cme_mbp_decoder"
+    ; "cme_event_orderer"
+    ; "cme_event_fifo"
+    ]
+    ~f:(fun name ->
+      check
+        (String.is_substring rtl ~substring:("module " ^ name ^ " ("))
+        ("hierarchy omitted " ^ name))
 ;;
 
 let test_configuration () =
-  check (Cme_config.default.ingress_fifo_depth = 64) "default ingress depth changed";
+  (* 65, not 64: Elastic_fifo admission is non-greedy, so one slot pays for the cycle in
+     which a drained slot cannot be refilled. See docs/phase6_notes.md. *)
+  check (Cme_config.default.ingress_fifo_depth = 65) "default ingress depth changed";
   check (Cme_config.default.event_fifo_depth = 16) "default event depth changed";
   ignore
     (Parser.circuit ~config:{ ingress_fifo_depth = 1; event_fifo_depth = 3 } ()
      : Circuit.t);
   List.iter
     [ { Cme_config.ingress_fifo_depth = 0; event_fifo_depth = 16 }
-    ; { Cme_config.ingress_fifo_depth = 64; event_fifo_depth = -1 }
+    ; { Cme_config.ingress_fifo_depth = 65; event_fifo_depth = -1 }
     ]
     ~f:(fun config ->
       let rejected =

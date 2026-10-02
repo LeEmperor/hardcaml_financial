@@ -14,6 +14,7 @@ type scalar =
   ; null_value : string option
   ; since_version : int
   ; valid_values : int list
+  ; valid_values_since_version : (int * int) list
   }
 [@@deriving equal, sexp]
 
@@ -91,6 +92,7 @@ let scalar_of_encoding schema template ~offset ~since_version encoding =
     ; null_value = component.null_value
     ; since_version = Int.max since_version component.since_version
     ; valid_values = []
+    ; valid_values_since_version = []
     }
   | Enum enum ->
     let primitive = encoding_primitive_exn schema encoding in
@@ -102,6 +104,9 @@ let scalar_of_encoding schema template ~offset ~since_version encoding =
     ; since_version = Int.max since_version enum.since_version
     ; valid_values =
         List.map enum.values ~f:(fun value -> int_of_wire_value primitive value.value)
+    ; valid_values_since_version =
+        List.map enum.values ~f:(fun value ->
+          int_of_wire_value primitive value.value, value.since_version)
     }
   | Set set ->
     let primitive = encoding_primitive_exn schema encoding in
@@ -112,6 +117,7 @@ let scalar_of_encoding schema template ~offset ~since_version encoding =
     ; null_value = None
     ; since_version = Int.max since_version set.since_version
     ; valid_values = []
+    ; valid_values_since_version = []
     }
   | Composite _ -> fail template "composite used where a scalar field was required"
 ;;
@@ -160,6 +166,7 @@ let price_field schema template (fields : field list) =
             ~init:0
             ~f:Int.max
       ; valid_values = []
+      ; valid_values_since_version = []
       }
     in
     let price_exponent =

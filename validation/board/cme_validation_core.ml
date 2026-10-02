@@ -6,8 +6,8 @@
 
    Everything from the recovered UDP payload to the UART pin lives here, so the whole
    CME-specific half of the board design is reachable from Cyclesim and therefore from
-   dune runtest. [Cme_board_top] adds only the networking blackbox and the board clock,
-   reset and LED plumbing, which no cycle-accurate simulation could cover anyway. *)
+   dune runtest. The native board top composes the same parser and sink directly with the
+   networking library; this module remains the focused payload-level verification DUT. *)
 
 open! Core
 open! Hardcaml

@@ -21,6 +21,6 @@ let%expect_test "mixed selected and filtered traffic" =
     {|
     ((packets 4) (updates 3) (end_of_event 3) (diagnostics 2) (crc_errors 0)
      (ip_errors 0) (sequence_gaps 1) (duplicates 1) (filtered_beats 10)
-     (filtered_while_parser_busy 10))
+     (filtered_while_parser_busy 10) (beats 50) (full_tail_beats 0))
     |}]
 ;;

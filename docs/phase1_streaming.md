@@ -16,16 +16,24 @@ cancels it on the clock edge.
 
 | Component | Contract |
 | --- | --- |
-| `Elastic_fifo` | Packed internal helper; exact positive capacity, with no empty combinational bypass. Uses Hardcaml's showahead FIFO with its output register included in the requested depth; depth 1 uses a single register. |
-| `Ingress_fifo` | Default 64 beats. Stores data, keep, first, last, and timestamp atomically. Timestamp is sampled on an accepted first beat and stored as zero on other entries. |
+| `Elastic_fifo` | Packed internal helper; exact positive capacity, with no empty combinational bypass. Uses Hardcaml's showahead FIFO with its output register included in the requested depth; depth 1 uses a single register. Admission is non-greedy: readiness is the registered full flag alone. |
+| `Ingress_fifo` | Default 65 beats. Stores data, keep, first, last, and timestamp atomically. Timestamp is sampled on an accepted first beat and stored as zero on other entries. |
 | `Event_fifo` | Default 16 events. Stores complete packed `Cme_types.Event` values. `event_valid_i` / `event_ready_o` face the producer; `event_valid_o` / `event_ready_i` face the consumer. |
-| `Byte_aligner` | Two stored ingress beats plus a byte offset, packet offset, and current packet timestamp. Maximum 128-bit byte window. |
+| `Byte_aligner` | Three stored ingress beats, of which the leading two form the window, plus a byte offset, packet offset, and current packet timestamp. Maximum 128-bit byte window. |
 
-FIFO depths include every entry and are not rounded to powers of two. A full
-FIFO can dequeue and enqueue on the same edge, permitting one transfer per
-cycle. An empty FIFO publishes an accepted item on the next cycle. Output
+FIFO depths include every entry and are not rounded to powers of two. A **full**
+FIFO refuses the input even in the cycle it is draining: readiness never depends
+on the current cycle's pop, so full-rate streaming is carried by `depth - 1`
+slots and a one-deep FIFO admits on alternate cycles. Defaults carry the extra
+slot. An empty FIFO publishes an accepted item on the next cycle. Output
 payloads remain stable while stalled or disabled. Invalid output values are
 ignored, including stale memory contents after reset.
+
+Aligner admission follows the same rule from the other side: `ready_o` is
+`occupied_slot_count < 3` read from the register, so no `ready` anywhere in the
+parser depends on the consume or pop decision being made in the same cycle. The
+third aligner slot exists to keep the two-beat window full under that rule. See
+[phase6_notes.md](phase6_notes.md).
 
 The aligner input flattens `Ingress_beat` as `data_i`, `keep_i`, `first_i`,
 `last_i`, and `ingress_timestamp_i`, alongside `valid_i` / `ready_o`. Generated

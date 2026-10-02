@@ -1,0 +1,1 @@
+TIMING clock_i 0.553 0.020

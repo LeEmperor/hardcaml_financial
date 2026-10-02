@@ -239,6 +239,33 @@ Commands from this checkout's root after the relevant suite exists:
 Use targeted promotion in a shared working tree. Do not run a blanket promotion
 that could accept another contributor's expect changes.
 
+## Readable event history
+
+The suites above are assertions: they pass silently and show nothing. The
+`@event-trace` alias exists to be read, not to gate. It runs the same
+differential Step fixture the conformance suite uses — every event is still
+compared bit-for-bit with the XML oracle as it is emitted — and prints the
+resulting normalized-event history grouped by the packet that produced it, with
+each packet's ingress and exchange timestamps, its input accept window, and each
+event's emission cycle.
+
+```sh
+./scripts/with-switch.sh dune build --display quiet @event-trace
+```
+
+Five synthetic scenarios cover ordinary two-sided depth, several messages in one
+datagram, a gap and a duplicate, session reset and resync, and malformed
+messages followed by recovery. `event_trace.exe` also takes `--pcap FILE` to
+replay UDP payloads from a classic-PCAP capture using the capture's own
+timestamps (`--limit N`, default 32, bounds the replay), and `--sexp` to dump
+the full machine-readable `Observation.t` alongside the human trace. Run the
+executable directly for those; it locates `docs/templates.xml` by walking up
+from the working directory.
+
+This is evidence for a reader and the first realistic input for a future book
+builder. It measures nothing: the enforcing per-entry latency and no-stall
+bounds remain `@performance-check`, and correctness remains `@runtest`.
+
 ## OxCaml implementation traps to preserve from networking
 
 When forwarding the local Step handler through the fixture, preserve the

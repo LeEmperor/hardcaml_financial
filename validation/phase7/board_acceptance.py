@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 # University of Florida
 # Author: Bohdan Purtell
-# Module: "board_cases.py"
-# Synthetic Phase 7 traffic, MII vectors and machine-checked UART board capture.
+# Module: "board_acceptance.py"
+# Fixed Phase 7 board acceptance: the wire encoders, the MII vector set, and the
+# machine-checked UART capture of one pass/fail sequence with absolute counter tuples.
+# The sibling script, feed_traffic.py, generates arbitrary traffic against these encoders
+# and derives its own expectations instead.
 import argparse
 import dataclasses
 import datetime
@@ -13,7 +16,6 @@ from pathlib import Path
 import select
 import socket
 import struct
-import subprocess
 import termios
 import time
 import zlib
@@ -21,15 +23,62 @@ import zlib
 COUNTERS = ('packets', 'updates', 'end_of_event', 'diagnostics',
             'crc_errors', 'ip_errors', 'sequence_gaps', 'duplicates')
 PORT = 31337
+DEFAULT_IFACE = 'enx207bd25880ef'
+TEMPLATE = 46
+ROOT_BLOCK = 11
+ENTRY_BLOCK = 32
+# 1500-byte Ethernet MTU less the 20-byte IPv4 and 8-byte UDP headers.
+MAX_UDP_PAYLOAD = 1472
+# 4-byte sequence number plus 8-byte sending time.
+PACKET_HEADER = 12
+# SBE header, root block, MBP group dimension and the empty order-ID group.
+MESSAGE_OVERHEAD = 10 + ROOT_BLOCK + 3 + 8
+LAST_MSG_OF_EVENT = 0x80
+# Root-block padding that lands the payload on an exact 8-byte beat boundary. A packet
+# header is 12 bytes and an unpadded message is a multiple of 8, so without padding every
+# datagram ends on a partial beat and the board never sees a full final beat.
+ALIGNED_ROOT_BLOCK = ROOT_BLOCK + 4
+
+# Deepest MBP group, and most single-entry messages, that still fit one datagram.
+MTU_ENTRIES = (MAX_UDP_PAYLOAD - PACKET_HEADER - MESSAGE_OVERHEAD) // ENTRY_BLOCK
+MTU_MESSAGES = (MAX_UDP_PAYLOAD - PACKET_HEADER) // (MESSAGE_OVERHEAD + ENTRY_BLOCK)
+# The same, once root padding has taken its bytes out of the entry budget.
+MTU_ALIGNED_ENTRIES = ((MAX_UDP_PAYLOAD - PACKET_HEADER - MESSAGE_OVERHEAD
+                        - (ALIGNED_ROOT_BLOCK - ROOT_BLOCK)) // ENTRY_BLOCK)
 
 
-def message(entries=1, time_value=123):
+def message(entries=1, time_value=123, template=TEMPLATE, last_of_event=True,
+            root_block=ROOT_BLOCK):
     # CME Production schema 1/version 13, template 46; reserved padding is explicit.
+    # root_block above 11 appends reserved root padding the decoder must skip, which is
+    # also the only way to reach a payload length that is a whole number of 8-byte beats.
     entry = struct.pack('<qiiIiBBBi', -123, 10, 1234, 7, 3, 2, 1, ord('0'), 9) + b'\0'
-    body = struct.pack('<QB', time_value, 128) + b'\0\0'
-    body += struct.pack('<HB', 32, entries) + entry * entries
+    body = struct.pack('<QB', time_value, LAST_MSG_OF_EVENT if last_of_event else 0)
+    body += b'\0' * (root_block - 9)
+    body += struct.pack('<HB', ENTRY_BLOCK, entries) + entry * entries
     body += struct.pack('<H', 24) + b'\0' * 6  # empty order-ID group
-    return struct.pack('<5H', 10 + len(body), 11, 46, 1, 13) + body
+    return struct.pack('<5H', 10 + len(body), root_block, template, 1, 13) + body
+
+
+def pack_messages(counts, last_only=False, root_block=ROOT_BLOCK):
+    """Assemble one packet body: one message per entry count in [counts].
+
+    With [last_only] the LastMsgOfEvent flag is set on the final message alone, so a
+    multi-message packet is one event rather than one event per message, which is the
+    shape a real incremental refresh arrives in."""
+    counts = tuple(counts)
+    return b''.join(
+        message(count, 123 + index, root_block=root_block,
+                last_of_event=not last_only or index == len(counts) - 1)
+        for index, count in enumerate(counts))
+
+
+def raw_message(declared_size, body=b''):
+    """An SBE header whose declared size does not describe the bytes that follow.
+
+    Below 10 the size cannot even cover the header (invalid_message_size); beyond what
+    the datagram holds the message runs off the end (message_beyond_packet)."""
+    return struct.pack('<5H', declared_size, ROOT_BLOCK, TEMPLATE, 1, 13) + body
 
 
 @dataclasses.dataclass(frozen=True)
@@ -41,11 +90,22 @@ class Case:
     port: int = PORT
     bad_crc: bool = False
     bad_ip: bool = False
+    # Set LastMsgOfEvent on the final message only, collapsing the packet to one event.
+    last_only: bool = False
+    # Reserved root padding the decoder must skip; the only route to a full final beat.
+    root_block: int = ROOT_BLOCK
+    # Pre-encoded message bytes, for shapes [counts] cannot express such as a malformed
+    # declared size. When empty the body is built from [counts].
+    body: bytes = b''
 
     @property
     def payload(self):
-        return struct.pack('<IQ', self.sequence, 99) + b''.join(
-            message(count, 123 + index) for index, count in enumerate(self.counts))
+        body = self.body or pack_messages(self.counts, self.last_only, self.root_block)
+        payload = struct.pack('<IQ', self.sequence, 99) + body
+        if len(payload) > MAX_UDP_PAYLOAD:
+            raise ValueError(f'{self.name}: {len(payload)} payload bytes exceeds the '
+                             f'{MAX_UDP_PAYLOAD}-byte MTU limit')
+        return payload
 
 
 def cases(include_errors=False):
@@ -64,6 +124,45 @@ def cases(include_errors=False):
             Case('bad_ip_checksum', 107, (1,), (8, 9, 8, 2, 1, 1, 1, 1), bad_ip=True),
         ]
     return result
+
+
+def mtu_cases():
+    """Board-run acceptance at MTU scale, continuing the counters [cases] leaves behind:
+    six packets, next sequence 106, and (6, 7, 6, 2, 0, 0, 1, 1) already on the wire.
+
+    These are deliberately absent from the MII vector set. iverilog is the elaboration and
+    compile gate, and functional coverage of heavy traffic lives in Cyclesim under
+    test/cme/validation_core/validation_core_heavy_traffic_tests.ml. What a board run adds
+    is the one thing no simulation shows: the same shapes surviving a real PHY, a real MAC
+    and the real 25 MHz application clock, back to back at line rate.
+
+    Every expected tuple here is checked independently by the XML oracle in
+    phase7_contracts.ml, which decodes these payloads with the golden decoder rather than
+    trusting the arithmetic below."""
+    deep = (MTU_ENTRIES,)
+    return [
+        # One message with the deepest MBP group a datagram can carry.
+        Case('mtu_deep_group', 106, deep, (7, 51, 7, 2, 0, 0, 1, 1)),
+        # The same byte budget spent on single-entry messages, one event each.
+        Case('mtu_many_messages', 107, (1,) * MTU_MESSAGES, (8, 73, 29, 2, 0, 0, 1, 1)),
+        # Many messages that together form one event.
+        Case('mtu_single_event', 108, (4,) * 8, (9, 105, 30, 2, 0, 0, 1, 1),
+             last_only=True),
+        # Payload is a whole number of 8-byte beats: the final beat is full.
+        Case('mtu_full_final_beat', 109, (MTU_ALIGNED_ENTRIES,), (10, 149, 31, 2, 0, 0, 1, 1),
+             root_block=ALIGNED_ROOT_BLOCK),
+        # A gap raises a diagnostic but the heavy payload behind it still parses.
+        Case('mtu_sequence_gap', 111, deep, (11, 193, 32, 3, 0, 0, 2, 1)),
+        # A duplicate is dropped whole, however many entries it carries.
+        Case('mtu_duplicate', 111, deep, (12, 193, 32, 4, 0, 0, 2, 2)),
+        Case('mtu_after_duplicate', 112, deep, (13, 237, 33, 4, 0, 0, 2, 2)),
+    ]
+
+
+def run_cases():
+    """Everything a board run transmits, in order. Error cases are excluded: a NIC
+    generates the real Ethernet FCS, and a frame it emits always carries a valid one."""
+    return cases() + mtu_cases()
 
 
 def checksum(data):
@@ -91,15 +190,22 @@ def mii_frame(case):
 
 def write_vectors(directory):
     directory.mkdir(parents=True, exist_ok=True)
+    vector_cases = cases(True)
     with (directory / 'mii_vectors.txt').open('w') as stream:
-        for case in cases(True):
+        for case in vector_cases:
             frame = mii_frame(case)
             stream.write(f'{len(frame):x} ' + ' '.join(f'{v:02x}' for v in frame)
                          + ' ' + ' '.join(f'{v:x}' for v in case.expected) + '\n')
-            (directory / f'{case.name}.bin').write_bytes(case.payload)
+    # Payload fixtures cover the MTU-scale board cases as well, so the XML oracle checks
+    # their expected counters even though they never enter the MII vector set.
+    named = {case.name: case for case in vector_cases + mtu_cases()}
+    for case in named.values():
+        (directory / f'{case.name}.bin').write_bytes(case.payload)
     (directory / 'cases.json').write_text(json.dumps([
         dict(name=c.name, payload_bytes=len(c.payload), sequence=c.sequence,
-             expected=dict(zip(COUNTERS, c.expected))) for c in cases(True)], indent=2) + '\n')
+             in_mii_vectors=c in vector_cases,
+             expected=dict(zip(COUNTERS, c.expected))) for c in named.values()],
+        indent=2) + '\n')
 
 
 class UartReader:
@@ -133,17 +239,17 @@ class UartReader:
         raise TimeoutError('No complete CME7 UART record before timeout')
 
 
-def provenance(networking):
-    # Everything hashed here belongs to this repository except the one generated file
-    # hardcaml_networking supplies, which check.sh stages into validation/vendor.
+def provenance():
     root = Path(__file__).resolve().parents[2]
-    paths = [root / 'cme_board_top.v', root / 'cme_mdp3_feed_parser.v',
-             root / 'validation/vendor/hardcaml_udp_rx_64_with_mac.v',
+    paths = [root / 'cme_feed_parser_validation_harness_arty.v',
+             root / 'cme_mdp3_feed_parser.v',
              root / 'validation/constraints/cme_arty.xdc', root / 'docs/templates.xml']
-    return dict(networking_revision=subprocess.check_output(
-        ['git', '-C', str(networking), 'rev-parse', 'HEAD'], text=True).strip(),
-        sha256={str(p): hashlib.sha256(p.read_bytes()).hexdigest()
-                for p in paths if p.exists()})
+    package_record = root / '_build/phase7/networking_package.txt'
+    result = dict(sha256={str(p): hashlib.sha256(p.read_bytes()).hexdigest()
+                          for p in paths if p.exists()})
+    if package_record.exists():
+        result['networking_package'] = package_record.read_text().strip()
+    return result
 
 
 def board_run(args):
@@ -151,7 +257,7 @@ def board_run(args):
     report = dict(started_utc=datetime.datetime.now(datetime.timezone.utc).isoformat(),
                   device='xc7a100tcsg324-1', application_clock_mhz=25,
                   interface=args.iface, serial=args.serial, results=[], passed=False,
-                  **provenance(args.networking))
+                  **provenance())
     reader = UartReader(args.serial)
     try:
         baseline = reader.record(time.monotonic() + args.timeout)
@@ -159,7 +265,7 @@ def board_run(args):
             raise RuntimeError(f'Reset the board before this run; counters are {baseline}')
         with socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0800)) as tx:
             tx.bind((args.iface, 0))
-            for case in cases():
+            for case in run_cases():
                 tx.send(ethernet(case))
                 deadline = time.monotonic() + args.timeout
                 matched = 0
@@ -195,11 +301,11 @@ def main():
     vectors = commands.add_parser('vectors', help='write deterministic simulation inputs; sends no traffic')
     vectors.add_argument('directory', type=Path)
     run = commands.add_parser('run', help='send board cases and verify UART counters (CAP_NET_RAW required)')
-    run.add_argument('--iface', required=True)
+    run.add_argument('--iface', default=DEFAULT_IFACE,
+                     help='network interface to transmit on (default: %(default)s)')
     run.add_argument('--serial', required=True)
     run.add_argument('--output', type=Path, required=True)
     run.add_argument('--timeout', type=float, default=8)
-    run.add_argument('--networking', type=Path, default=Path('../hardcaml_networking'))
     args = parser.parse_args()
     if args.command == 'vectors':
         write_vectors(args.directory)

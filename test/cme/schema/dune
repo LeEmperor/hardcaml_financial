@@ -4,12 +4,18 @@
 ; Phase 4 schema generator, golden decoder, synthetic fixture, and PCAP tests.
 
 (library
+ (name schema_test_support)
+ (modules schema_fixture)
+ (libraries core)
+ (preprocess (pps ppx_jane)))
+
+(library
  (name schema_inline_tests)
- (modules schema_fixture schema_unit_quickcheck_tests schema_expect_tests)
+ (modules schema_unit_quickcheck_tests schema_expect_tests)
  (inline_tests
   (deps ../../../docs/templates.xml ../../../docs/templates.sha256)
   (flags (:standard -source-tree-root .)))
- (libraries core cme_schema cme_of_hardcaml base_quickcheck)
+ (libraries core cme_schema cme_of_hardcaml base_quickcheck schema_test_support)
  (preprocess (pps ppx_jane ppx_expect)))
 
 (rule

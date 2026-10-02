@@ -66,20 +66,16 @@ let%test_unit "interleaved filtered traffic does not perturb any counter" =
     ; filtered (simple 503L)
     ]
   in
-  let strip (o : Observation.t) =
-    { o with filtered_beats = 0; filtered_while_parser_busy = 0 }
-  in
   [%test_result: Observation.t]
-    (strip (run interleaved))
-    ~expect:(strip (run selected_only))
+    (Observation.counters_only (run interleaved))
+    ~expect:(Observation.counters_only (run selected_only))
 ;;
 
 let%test_unit "counters are stable across seeded stall schedules" =
   let stream = [ selected (simple 1L); filtered (simple 700L); selected (simple 2L) ] in
-  let strip (o : Observation.t) =
-    { o with filtered_beats = 0; filtered_while_parser_busy = 0 }
-  in
-  let reference = strip (run ~seed:1 stream) in
+  let reference = Observation.counters_only (run ~seed:1 stream) in
   List.iter [ 2; 3; 5; 8 ] ~f:(fun seed ->
-    [%test_result: Observation.t] (strip (run ~seed stream)) ~expect:reference)
+    [%test_result: Observation.t]
+      (Observation.counters_only (run ~seed stream))
+      ~expect:reference)
 ;;

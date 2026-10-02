@@ -10,9 +10,10 @@
 
 (rule
  (alias runtest)
- (deps board_cases.py test_board_cases.py ../../docs/templates.xml)
+ (deps board_acceptance.py test_board_acceptance.py feed_traffic.py
+       ../../docs/templates.xml)
  (action
   (progn
-   (run python3 -B %{dep:test_board_cases.py})
-   (run python3 %{dep:board_cases.py} vectors vectors)
+   (run python3 -B %{dep:test_board_acceptance.py})
+   (run python3 %{dep:board_acceptance.py} vectors vectors)
    (run %{exe:phase7_contracts.exe} vectors %{dep:../../docs/templates.xml}))))

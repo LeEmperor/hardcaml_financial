@@ -97,8 +97,7 @@ let byte_aligner_cmd =
     emit
       ~scope
       ~path:"cme_byte_aligner.v"
-      ~notice:
-        "// CME byte aligner; max_consume 8. DUT for validation/synth_harness.sv.\n"
+      ~notice:"// CME byte aligner; max_consume 8. DUT for validation/synth_harness.sv.\n"
       (Circ_byte_aligner.create_exn
          ~name:"cme_byte_aligner"
          (Cme_of_hardcaml.Byte_aligner.create scope)))

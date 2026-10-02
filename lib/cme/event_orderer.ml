@@ -42,6 +42,7 @@ module O = struct
   [@@deriving hardcaml]
 end
 
+[@@@ocamlformat "disable"]
 let create (_scope : Scope.t) (i : _ I.t) =
   let module T = Cme_types in
   let active = i.en_i &: ~:(i.reset_i) in
@@ -51,7 +52,13 @@ let create (_scope : Scope.t) (i : _ I.t) =
   let diagnostic = item.kind ==:. T.Message_item_kind.diagnostic in
   let start = item.kind ==:. T.Message_item_kind.start in
   let abort = busy &: ~:closed &: diagnostic in
-  let route = ~:pending &: mux2 busy ~:closed (start &: ~:diagnostic) in
+  let retiring =
+    busy &: closed &: i.decoder_done_i &: (~:(i.decoder_event_valid_i) |: i.event_ready_i)
+  in
+  let route =
+    ~:pending
+    &: mux2 busy (~:closed |: (retiring &: start &: ~:diagnostic)) (start &: ~:diagnostic)
+  in
   let decoder_valid = active &: i.valid_i &: route in
   let decoder_transfer = decoder_valid &: i.decoder_ready_i in
   let terminal = diagnostic |: item.body_empty |: item.beat.last in
@@ -76,7 +83,7 @@ let create (_scope : Scope.t) (i : _ I.t) =
   <-- reg
         spec
         ~enable:active
-        (mux2 done_transfer gnd (mux2 decoder_transfer terminal closed));
+        (mux2 decoder_transfer terminal (mux2 done_transfer gnd closed));
   pending
   <-- reg
         spec
@@ -95,7 +102,7 @@ let create (_scope : Scope.t) (i : _ I.t) =
   ; event_valid_o = active &: mux2 busy i.decoder_event_valid_i diagnostic_valid
   ; idle_o = ~:busy &: ~:pending
   }
-;;
+[@@@ocamlformat "enable"]
 
 let hierarchical ?instance scope i =
   let module H = Hierarchy.In_scope (I) (O) in

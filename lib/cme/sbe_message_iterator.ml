@@ -3,7 +3,10 @@
 (* Module: "sbe_message_iterator.ml" *)
 (* Generic ten-byte SBE prefix collection and size-bounded body delivery. The two-beat
    window never joins packets. Template admission is an elaboration-time list; no schema
-   offsets or production template choices belong here. *)
+   offsets or production template choices belong here.
+
+   This is the bread and the butter of the system in terms of dispatching;
+*)
 
 open! Hardcaml
 open Signal
@@ -33,29 +36,140 @@ module O = struct
   [@@deriving hardcaml]
 end
 
-let create ~supported_templates scope (i : _ I.t) =
+module State = struct
+  type t =
+    | Idle
+    | Prefix_first (* collecting the first eight prefix bytes *)
+    | Prefix_tail (* collecting the final two after a split *)
+    | Body (* streaming the size-bounded message body *)
+    | Empty_body (* the message was exactly its ten-byte prefix *)
+    | Skip (* discarding the body of an unsupported template *)
+    | Drain (* discarding the remainder of an untrustworthy packet *)
+    | Error (* holding a diagnostic at the output *)
+  [@@deriving sexp_of, compare ~localize, enumerate]
+end
+
+(* [Error] has to hand control back somewhere once its diagnostic is taken. Only these
+   four targets are ever reachable, so the restore is an exhaustive match rather than a
+   raw state code smuggled through a register. *)
+module Resume = struct
+  module Cases = struct
+    type t =
+      | Idle
+      | Prefix_first
+      | Skip
+      | Drain
+    [@@deriving sexp_of, compare ~localize, enumerate]
+  end
+
+  include Hardcaml.Enum.Make_binary (Cases)
+end
+
+(* Control state sharing the [active] enable. Bundled so it is registered, named and
+   updated in one place each, rather than as separate wires carrying next-value muxes. *)
+module Regs = struct
+  type 'a t =
+    { input_done : 'a (* the packet's final input beat has been taken *)
+    ; remaining : 'a [@bits 16] (* body bytes still owed for the current message *)
+    ; started : 'a (* the current message has already emitted a body beat *)
+    ; second_error : 'a (* the held diagnostic is the truncation follow-up *)
+    }
+  [@@deriving hardcaml]
+end
+
+[@@@ocamlformat "disable"]
+let create
+    ~supported_templates
+    scope (i : _ I.t)
+  =
+
   List.iter
     (fun id -> if id < 0 || id > 65535 then invalid_arg "template ID must fit uint16")
     supported_templates;
-  let module T = Cme_types in
-  let active = i.en_i &: ~:(i.reset_i) in
+
+  (* spec *)
   let spec = Reg_spec.create ~clock:i.clock_i ~clear:i.reset_i () in
-  let output_ready = wire 1 in
+
+  (* local aliasing *)
+  let module T = Cme_types in
+
+  (* spot derives *)
+  let active = i.en_i &: ~:(i.reset_i) in
+
+  (* hanger wires*)
+  let output_ready = Signal.wire 1 in
+
   let input = T.Packet_item.Of_signal.unpack i.item_i in
-  (* Idle, prefix first eight, prefix final two, body, empty body, skip, drain, error. *)
-  let state = wire 3 in
-  let code n = of_int_trunc ~width:3 n in
-  let idle = state ==:. 0 in
-  let input_done = wire 1 in
+
+  (* [sm.current] is the state register's q and [sm.is] hands back plain combinational
+     signals, so the state is readable here even though the transitions are only compiled
+     once the aligner outputs exist. The same holds for [r.<field>.value]. *)
+  let sm = Always.State_machine.create (module State) spec ~enable:active in
+  let _ : Signal.t = sm.current -- "phase6_iterator_state" in
+  let r = Regs.Of_always.reg spec ~enable:active in
+  Regs.Of_always.apply_names ~prefix:"phase6_iterator_" r;
+
+  (* ppx rise up *)
+  let idle              = sm.is State.Idle in
+  let prefix_first      = sm.is State.Prefix_first in
+  let prefix_tail       = sm.is State.Prefix_tail in
+  let body_state        = sm.is State.Body in
+  let empty_body_state  = sm.is State.Empty_body in
+  let skip_state        = sm.is State.Skip in
+  let draining          = sm.is State.Drain in
+  let error_state       = sm.is State.Error in
+
+  (*
+    data flow example:
+
+    in idle state, we're looking to start and crunch off 10B from the message header
+        each of these are 2B
+      -> MsgSize,
+      -> BlockLength,
+      -> TemplateID, <-- important
+      -> SchemaID,
+      -> Version
+
+
+
+      prefix_first => collect 10B
+      prefix_tail  => collect final 2B after a split
+        we're walking multiple messages, so the assumptions on offset are not nice clean 2 or 8
+        after the first header item anymore -> thus we need a spare state for grabbing remaining header
+        introduces extra latency here but thit is necessary
+    *)
+
+  let collecting = prefix_first |: prefix_tail in
+  let input_done = r.input_done.value in
+  let remaining = r.remaining.value in
+  let started = r.started.value in
+  let second_error = r.second_error.value in
   let consume_count, consume_valid = wire 4, wire 1 in
+
+  (* is the incoming packet adherent to the markers that the feed sequencer would've handed it?  *)
   let is_start = input.kind ==:. T.Packet_item_kind.start in
   let is_diagnostic = input.kind ==:. T.Packet_item_kind.diagnostic in
+
   let empty_packet = is_start &: input.body_empty in
+  let retiring_packet = wire 1 in
+
+  (* huh *)
+  let early_start = retiring_packet &: is_start &: ~:(input.body_empty) in
+
   let accept_bytes =
-    idle &: is_start &: ~:(input.body_empty) |: (~:idle &: ~:input_done)
+    idle &: is_start &: ~:(input.body_empty) |: early_start |: (~:idle &: ~:input_done)
   in
+
+  (* byte aligner instance;
+     downstream modules have no concept of "beats" in terms of arriving data, only a byte window
+     they are exposed; this is somewhat necessary in light of the "consume" paradigm being used
+     on top of the fact that most of the things here make use of an offset of 4 because of the
+     header offsets
+   *)
+
   let a =
     Byte_aligner.hierarchical
+      ~max_consume:15
       scope
       { clock_i = i.clock_i
       ; reset_i = i.reset_i
@@ -70,58 +184,113 @@ let create ~supported_templates scope (i : _ I.t) =
       ; consume_valid_i = consume_valid
       }
   in
+
+  (* bruh *)
   let ready =
     active
     &: mux2
-         idle
-         (mux2 is_diagnostic output_ready (empty_packet |: a.ready_o))
+         (* are we idle or starting early? *)
+         (idle |: early_start)
+
+         (* yes - pass the output ready and aligner readys through, assuming we're not a diagnostic packet *)
+         (mux2
+            is_diagnostic
+            output_ready
+            (empty_packet |: a.ready_o)
+         )
+
+        (* !input_done AND a.ready_o represents the backpressure push through *)
          (~:input_done &: a.ready_o)
   in
+
   let input_transfer = i.valid_i &: ready in
-  let start = input_transfer &: idle &: is_start &: ~:(input.body_empty) in
-  input_done
-  <-- reg
-        spec
-        ~enable:active
-        (mux2
-           idle
-           (start &: input.beat.last)
-           (input_done |: (input_transfer &: input.beat.last)));
+  let start =
+    input_transfer &: (idle |: early_start) &: is_start &: ~:(input.body_empty)
+  in
+
   let packet =
     T.Packet_context.Of_signal.unpack
       (reg spec ~enable:start (T.Packet_context.Of_signal.pack input.context))
   in
-  let prefix_first = state ==:. 1 in
-  let prefix_tail = state ==:. 2 in
-  let collecting = prefix_first |: prefix_tail in
-  let required = mux2 prefix_first (of_int_trunc ~width:5 8) (of_int_trunc ~width:5 2) in
+
+  let count =
+    mux2
+      (remaining <:. 8)
+      (uresize remaining ~width:5)
+      (of_int_trunc ~width:5 8)
+  in
+
+  let prefetch_full, prefetch_head = wire 1, wire 1 in
+  let prefetched = prefetch_full |: prefetch_head in
+  let shifted_prefix =
+    mux
+      (uresize count ~width:3)
+      (List.init 8
+         (fun byte ->
+            srl a.data_o ~by:(byte * 8)
+         )
+      )
+  in
+
+  let prefix_data =
+    mux2
+      prefetched
+      shifted_prefix
+      a.data_o
+  in
+
+  let prefix_span = mux2 prefetch_full (count +:. 10) (zero 5) in
+  (* Offset seven leaves only nine bytes in two stored beats. Retire eight before
+     collecting the final two; every other alignment fits the complete prefix. *)
+  let split_prefix =
+    prefix_first &: (select a.packet_byte_offset_o ~high:2 ~low:0 ==:. 7)
+  in
+  let required =
+    mux2
+      prefix_tail
+      (of_int_trunc ~width:5 2)
+      (mux2 split_prefix (of_int_trunc ~width:5 8) (of_int_trunc ~width:5 10))
+  in
   let collect = collecting &: a.valid_o &: (a.available_o >=: required |: a.boundary_o) in
   let short_prefix =
     collect
     &: (a.available_o
         <: required
-        |: (prefix_first &: a.boundary_o &: (a.available_o ==:. 8)))
+        |: (split_prefix &: a.boundary_o &: (a.available_o ==:. 8)))
   in
   let prefix_head =
-    reg spec ~enable:(collect &: prefix_first) (select a.data_o ~high:63 ~low:0)
+    reg
+      spec
+      ~enable:(collect &: split_prefix |: prefetch_head)
+      (select prefix_data ~high:63 ~low:0)
   in
-  let offset =
-    reg spec ~enable:(collect &: prefix_first) (a.packet_byte_offset_o +:. 12)
+  let header_head = mux2 prefix_tail prefix_head (select prefix_data ~high:63 ~low:0) in
+  let current_offset =
+    a.packet_byte_offset_o +:. 12 +: mux2 prefetched (uresize count ~width:16) (zero 16)
   in
-  let message_offset = mux2 prefix_first (a.packet_byte_offset_o +:. 12) offset in
+  let offset = reg spec ~enable:(collect &: prefix_first |: prefetched) current_offset in
+  let message_offset = mux2 (prefix_first |: prefetched) current_offset offset in
+
+  (* contents packed struct map *)
+  (* glorified parallele slicer, only latches into the relevant pipeline reg when necessary *)
   let parsed : _ T.Message_context.t =
-    { msg_size = select prefix_head ~high:15 ~low:0
-    ; block_length = select prefix_head ~high:31 ~low:16
-    ; template_id = select prefix_head ~high:47 ~low:32
-    ; schema_id = select prefix_head ~high:63 ~low:48
-    ; schema_version = select a.data_o ~high:15 ~low:0
+    { msg_size        = select header_head ~high:15 ~low:0
+    ; block_length    = select header_head ~high:31 ~low:16
+    ; template_id     = select header_head ~high:47 ~low:32
+    ; schema_id       = select header_head ~high:63 ~low:48
+    ; schema_version  =
+        mux2
+          prefix_tail
+          (select a.data_o ~high:15 ~low:0)
+          (select prefix_data ~high:79 ~low:64)
     ; message_header_present = vdd
     ; transaction_time = zero 64
     ; transaction_time_present = gnd
-    ; packet_byte_offset = offset
+    ; packet_byte_offset = message_offset
     }
   in
-  let prefix_complete = collect &: prefix_tail &: ~:short_prefix in
+
+  let prefix_complete = collect &: ~:split_prefix &: ~:short_prefix |: prefetch_full in
   let message =
     T.Message_context.Of_signal.unpack
       (reg spec ~enable:prefix_complete (T.Message_context.Of_signal.pack parsed))
@@ -134,15 +303,8 @@ let create ~supported_templates scope (i : _ I.t) =
   in
   let invalid_size = prefix_complete &: (parsed.msg_size <:. 10) in
   let unsupported = prefix_complete &: ~:invalid_size &: ~:supported in
-  let prefix_ends_packet = a.boundary_o &: (a.available_o ==: required) in
-  let remaining = wire 16 in
-  let started = wire 1 in
-  let body_state = state ==:. 3 in
-  let skip_state = state ==:. 5 in
-  let draining = state ==:. 6 in
-  let count =
-    mux2 (remaining <:. 8) (uresize remaining ~width:5) (of_int_trunc ~width:5 8)
-  in
+  let consumed_prefix_span = mux2 prefetch_full prefix_span required in
+  let prefix_ends_packet = a.boundary_o &: (a.available_o ==: consumed_prefix_span) in
   let available_count =
     mux2 (a.available_o <:. 8) a.available_o (of_int_trunc ~width:5 8)
   in
@@ -161,6 +323,24 @@ let create ~supported_templates scope (i : _ I.t) =
   let advance = body_transfer |: skip in
   let end_message = remaining <=:. 8 in
   let end_packet = a.boundary_o &: (a.available_o ==: count) in
+  retiring_packet <-- (advance &: end_message &: end_packet);
+  (* A short final body beat can retire together with the next message's prefix. Parse ten
+     bytes when they fit, otherwise save eight and finish on the next cycle. The last body
+     item still carries the old registered message context. *)
+  prefetch_full
+  <-- (advance
+       &: end_message
+       &: ~:end_packet
+       &: (count <=:. 5)
+       &: (a.available_o >=: count +:. 10));
+  prefetch_head
+  <-- (advance
+       &: end_message
+       &: ~:end_packet
+       &: ~:prefetch_full
+       &: (count <=:. 7)
+       &: (a.available_o >=: count +:. 8)
+       &: ~:(a.boundary_o &: (a.available_o ==: count +:. 8)));
   let drain = draining &: a.valid_o in
   let drain_end = a.boundary_o &: (a.available_o <=:. 8) in
   let missing_offset = a.packet_byte_offset_o +: uresize a.available_o ~width:16 +:. 12 in
@@ -189,7 +369,10 @@ let create ~supported_templates scope (i : _ I.t) =
       (T.Message_context.Of_signal.mux2 prefix_complete parsed message)
   in
   let diagnostic_offset =
-    mux2 invalid_size offset (mux2 unsupported (offset +:. 4) missing_offset)
+    mux2
+      invalid_size
+      message_offset
+      (mux2 unsupported (message_offset +:. 4) missing_offset)
   in
   let diagnostic =
     T.Event.Of_signal.pack
@@ -207,76 +390,113 @@ let create ~supported_templates scope (i : _ I.t) =
     reg spec ~enable:failure (unsupported &: prefix_missing_body)
   in
   let resume =
-    reg
-      spec
+    let to_ (target : Resume.Cases.t) = Resume.Of_signal.of_enum target in
+    let mux2 = Resume.Of_signal.mux2 in
+    Resume.Of_signal.reg
       ~enable:failure
+      spec
       (mux2
          short_body
-         (code 6)
+         (to_ Drain)
          (mux2
             (short_prefix |: invalid_size)
-            (mux2 (a.boundary_o &: (a.available_o <=: required)) (code 0) (code 6))
+            (mux2
+               (a.boundary_o &: (a.available_o <=: consumed_prefix_span))
+               (to_ Idle)
+               (to_ Drain))
             (mux2
                prefix_ends_packet
-               (code 0)
-               (mux2 (parsed.msg_size ==:. 10) (code 1) (code 5)))))
+               (to_ Idle)
+               (mux2 (parsed.msg_size ==:. 10) (to_ Prefix_first) (to_ Skip)))))
   in
-  let error_transfer = active &: (state ==:. 7) &: output_ready in
-  let second_error = wire 1 in
-  second_error
-  <-- reg
-        spec
-        ~enable:active
-        (mux2
-           failure
-           gnd
-           (mux2 error_transfer (pending_truncation &: ~:second_error) second_error));
-  let continuation = mux2 end_packet (code 0) (code 1) in
-  let after_prefix = mux2 (parsed.msg_size ==:. 10) (code 4) (code 3) in
-  state
-  <-- reg
-        spec
-        ~enable:active
-        (mux2
-           failure
-           (code 7)
-           (mux2
-              start
-              (code 1)
-              (mux2
-                 collect
-                 (mux2 prefix_first (code 2) after_prefix)
-                 (mux2
-                    (advance &: end_message)
-                    continuation
-                    (mux2
-                       (state ==:. 4 &: output_ready)
-                       (mux2
-                          input_done
-                          (mux2 (a.available_o ==:. 0) (code 0) (code 1))
-                          (code 1))
-                       (mux2
-                          error_transfer
-                          (mux2 (pending_truncation &: ~:second_error) (code 7) resume)
-                          (mux2 (drain &: drain_end) (code 0) state)))))));
-  remaining
-  <-- reg
-        spec
-        ~enable:active
-        (mux2
-           prefix_complete
-           (parsed.msg_size -:. 10)
-           (mux2 advance (remaining -: uresize count ~width:16) remaining));
-  started
-  <-- reg spec ~enable:active (mux2 collecting gnd (mux2 body_transfer vdd started));
+  let error_transfer = active &: error_state &: output_ready in
+
+  (* Transition fragments shared between arms. *)
+  let after_prefix =
+    Always.[ if_ (parsed.msg_size ==:. 10)
+               [ sm.set_next State.Empty_body ]
+               [ sm.set_next State.Body ] ]
+  in
+  let continuation =
+    Always.[ if_ prefetch_full after_prefix
+             @@ elif prefetch_head [ sm.set_next State.Prefix_tail ]
+             @@ elif end_packet [ sm.set_next State.Idle ]
+             [ sm.set_next State.Prefix_first ] ]
+  in
+  (* [Prefix_first] and [Prefix_tail] differ only in [required]/[split_prefix], which are
+     already folded into [collect]; likewise [Body] and [Skip] differ only in whether the
+     beat reaches the output. Each pair therefore shares one transition arm. *)
+  let collecting_arm =
+    Always.[ if_ failure [ sm.set_next State.Error ]
+             @@ elif collect
+                  [ if_ split_prefix [ sm.set_next State.Prefix_tail ] after_prefix ]
+                  [] ]
+  in
+  (* [start] outranks [advance &: end_message] here: both fire on an early start, and the
+     next packet's prefix has to win over retiring to [Idle]. *)
+  let streaming_arm =
+    Always.[ if_ failure [ sm.set_next State.Error ]
+             @@ elif start [ sm.set_next State.Prefix_first ]
+             @@ elif (advance &: end_message) continuation
+             [] ]
+  in
+  Always.(compile
+    [ (* Sticky from the packet's final input beat; [start] reloads it for the next. *)
+      r.input_done <-- (input_done |: (input_transfer &: input.beat.last))
+    ; when_ (idle |: start) [ r.input_done <-- (start &: input.beat.last) ]
+    ; when_ advance [ r.remaining <-- remaining -: uresize count ~width:16 ]
+    ; when_ prefix_complete [ r.remaining <-- parsed.msg_size -:. 10 ]
+    ; when_ body_transfer [ r.started <-- vdd ]
+    ; when_ (collecting |: prefetched) [ r.started <-- gnd ]
+    ; when_ error_transfer [ r.second_error <-- (pending_truncation &: ~:second_error) ]
+    ; when_ failure [ r.second_error <-- gnd ]
+
+    ; sm.switch
+        [ State.Idle,         [ when_ start [ sm.set_next State.Prefix_first ] ]
+        ; State.Prefix_first, collecting_arm
+        ; State.Prefix_tail,  collecting_arm
+        ; State.Body,         streaming_arm
+        ; State.Skip,         streaming_arm
+        ; State.Empty_body,
+          [ when_ output_ready
+              [ if_ (input_done &: (a.available_o ==:. 0))
+                  [ sm.set_next State.Idle ]
+                  [ sm.set_next State.Prefix_first ] ] ]
+        ; State.Drain,        [ when_ (drain &: drain_end) [ sm.set_next State.Idle ] ]
+        ; State.Error,
+          [ when_ error_transfer
+              [ if_ (pending_truncation &: ~:second_error)
+                  [ sm.set_next State.Error ]
+                  [ Resume.Of_always.match_ resume
+                      [ Resume.Cases.Idle, [ sm.set_next State.Idle ]
+                      ; Prefix_first,      [ sm.set_next State.Prefix_first ]
+                      ; Skip,              [ sm.set_next State.Skip ]
+                      ; Drain,             [ sm.set_next State.Drain ]
+                      ] ] ] ]
+        ]
+    ]);
   consume_valid <-- (collect |: advance |: drain);
   consume_count
   <-- uresize
         (mux2
-           collecting
-           (mux2 (a.available_o <: required) a.available_o required)
-           (mux2 draining available_count count))
+           prefetched
+           (count
+            +: mux2 prefetch_full (of_int_trunc ~width:5 10) (of_int_trunc ~width:5 8))
+           (mux2
+              collecting
+              (mux2 (a.available_o <: required) a.available_o required)
+              (mux2 draining available_count count)))
         ~width:4;
+  List.iter
+    (fun (name, signal) -> ignore (signal -- ("phase6_iterator_" ^ name)))
+    [ "offset", a.packet_byte_offset_o
+    ; "available", a.available_o
+    ; "consume", consume_valid
+    ; "count", consume_count
+    ; "body", body_transfer
+    ; "ready", output_ready
+    ; "prefix", prefix_complete
+    ];
   let blank = T.Message_item.Of_signal.zero () in
   let keep =
     mux
@@ -332,19 +552,29 @@ let create ~supported_templates scope (i : _ I.t) =
         &: i.valid_i
         &: is_diagnostic
         |: body_valid
-        |: (state ==:. 4)
-        |: (state ==:. 7))
+        |: empty_body_state
+        |: error_state)
   in
   let output_item =
     T.Message_item.Of_signal.pack
       (T.Message_item.Of_signal.mux2
-         (idle |: (state ==:. 7))
+         (idle |: error_state)
          diagnostic_item
-         (T.Message_item.Of_signal.mux2 (state ==:. 4) empty body))
+         (T.Message_item.Of_signal.mux2 empty_body_state empty body))
   in
+  (* Two effective items absorb the decoder's final-dimension/next-start handoff; a single
+     slot propagates those short pauses into an accumulating padded-packet backlog. Three
+     slots are needed to keep two effective, because non-greedy admission cannot refill
+     the last slot in the cycle it drains. See docs/phase6_notes.md.
+
+     Depth 3 leaves the backing array two Message_items deep, which is past Vivado's
+     block-memory inference threshold: at this width that is twelve BRAM tiles to hold two
+     entries. Force distributed RAM instead, so the depth is bought in LUTRAM sized to the
+     two entries actually stored. See docs/retargeting.md. *)
   let output =
     Elastic_fifo.create
-      ~depth:1
+      ~depth:3
+      ~ram_attributes:[ Rtl_attribute.Vivado.Ram_style.distributed ]
       scope
       ~clock:i.clock_i
       ~reset:i.reset_i
@@ -359,7 +589,7 @@ let create ~supported_templates scope (i : _ I.t) =
   ; item_o = output.data
   ; idle_o = idle &: (a.available_o ==:. 0) &: ~:(output.valid)
   }
-;;
+[@@@ocamlformat "enable"]
 
 let hierarchical ~supported_templates ?instance scope i =
   let module H = Hierarchy.In_scope (I) (O) in

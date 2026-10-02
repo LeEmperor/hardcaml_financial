@@ -80,7 +80,17 @@ let packets random =
   |> List.concat
 ;;
 
-let run ?(seed = 1) ?payloads ~depth ~pass ~continuous ~shim_gaps ~resets () =
+let run
+  ?(seed = 1)
+  ?payloads
+  ?(greedy_admission = false)
+  ~depth
+  ~pass
+  ~continuous
+  ~shim_gaps
+  ~resets
+  ()
+  =
   let module Dut = struct
     module I = Ingress_fifo.I
     module O = Ingress_fifo.O
@@ -90,7 +100,7 @@ let run ?(seed = 1) ?payloads ~depth ~pass ~continuous ~shim_gaps ~resets () =
     let create scope i =
       if pass
       then F.Pass_through.create ~depth scope i
-      else Ingress_fifo.create ~depth scope i
+      else Ingress_fifo.create ~depth ~greedy_admission scope i
     ;;
   end
   in
@@ -172,20 +182,24 @@ let run ?(seed = 1) ?payloads ~depth ~pass ~continuous ~shim_gaps ~resets () =
         offered;
       let actual = output o in
       F.Monitor.observe output_monitor ~reset ~active ~valid ~ready actual;
+      let pop = valid && ready in
       if not pass
       then (
         check
           (Bool.equal valid (active && not (Queue.is_empty expected)))
           "FIFO valid/occupancy";
+        (* Capacity is exactly `depth` in both admission modes; they differ only on
+           whether a beat leaving in this cycle makes room in this cycle. Under the
+           default non-greedy rule it does not, so full-rate streaming needs one slot more
+           than the traffic. See docs/phase6_notes.md and docs/retargeting.md. *)
         check
           (Bool.equal
              app_tready_i
-             (active && (Queue.length expected < depth || (valid && ready))))
-          "FIFO exact capacity or replacement readiness";
+             (active && (Queue.length expected < depth || (greedy_admission && pop))))
+          "FIFO exact capacity or admission readiness";
         if Queue.length expected = depth then incr full);
       if continuous && Option.is_some !pending && active
       then check app_tready_i "internally generated input stall";
-      let pop = valid && ready in
       let push = Option.is_some !pending && app_tready_i in
       if continuous && !output_count > 0 && not (Queue.is_empty expected)
       then check valid "bubble in sustained stream output";
