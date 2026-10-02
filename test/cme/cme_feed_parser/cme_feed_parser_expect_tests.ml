@@ -1,57 +1,51 @@
 (* University of Florida *)
 (* Author: Bohdan Purtell *)
 (* Module: "cme_feed_parser_expect_tests.ml" *)
-
-(* Expect Test Suite: Cme_feed_parser
-
-   Golden traces of the port contract as it stands. There is no behavior to freeze yet, so
-   what these goldens are for is the diff: the first commit that gives the block a
-   datapath will turn every row here red, and reading that diff is how the new behavior
-   gets reviewed against the old contract.
-
-   Tags: [{ "ACTIVE" ; "TEST" ; "EXPECT_TEST" }]
-*)
+(* Compact integrated event ordering trace, using the differential Step fixture. *)
 
 open! Core
-open! Cme_feed_parser_testbench
+open Cme_feed_parser_testbench
+open F
 
-let print_compact observations =
-  List.iter observations ~f:(fun observation ->
-    print_s
-      [%sexp (Compact_observation.of_observation observation : Compact_observation.t)])
-;;
-
-let%expect_test "a short burst of beats" =
-  print_compact
-    (Testbench.run_stimuli
-       [ Stimulus.idle; Stimulus.beat 0x55; Stimulus.beat 0xAA; Stimulus.idle ]);
+let%expect_test "updates, gap, duplicate, and zero-entry end-of-event" =
+  let result =
+    run
+      [ packet
+          10L
+          [ message ~match_event_indicator:0x80 [ default_entry; default_entry ] ]
+      ; packet 12L [ message ~match_event_indicator:0x80 [] ]
+      ; packet 12L [ message [ default_entry ] ]
+      ; packet 13L [ message ~schema:2 []; message ~match_event_indicator:0x80 [] ]
+      ]
+  in
+  List.iter result.events ~f:(function
+    | G.Mbp_update u ->
+      printf
+        "update seq=%Ld entry=%d/%d price=%Ld last=%b valid=%b\n"
+        u.packet.packet_seq
+        u.entry_index
+        u.entry_count
+        (Option.value_exn u.price_mantissa)
+        u.message_last
+        u.packet.channel_valid
+    | End_of_event e ->
+      printf "end seq=%Ld valid=%b\n" e.packet.packet_seq e.packet.channel_valid
+    | Diagnostic d ->
+      printf
+        "diagnostic seq=%Ld code=%d offset=%d valid=%b\n"
+        d.packet.packet_seq
+        (code d.code)
+        d.byte_offset
+        d.packet.channel_valid);
   [%expect
     {|
-    ((data_out 0x0) (slave_ready true))
-    ((data_out 0x0) (slave_ready true))
-    ((data_out 0x0) (slave_ready true))
-    ((data_out 0x0) (slave_ready true))
-    |}]
-;;
-
-let%expect_test "a clear changes nothing, because nothing is held" =
-  print_compact (Testbench.run_stimuli [ Stimulus.beat 0xFF; Stimulus.clear ]);
-  [%expect
-    {|
-    ((data_out 0x0) (slave_ready true))
-    ((data_out 0x0) (slave_ready true))
-    |}]
-;;
-
-let%expect_test "both sides of one beat's edge" =
-  print_s [%sexp (Testbench.run_beat (Stimulus.beat 0xDEAD_BEEF) : Edges.t)];
-  [%expect
-    {|
-    ((before_edge
-      ((stimulus ((rst false) (valid true) (data 3735928559))) (data_out 0)
-       (slave_ready true)))
-     (after_edge
-      ((stimulus ((rst false) (valid true) (data 3735928559))) (data_out 0)
-       (slave_ready true))))
+    update seq=10 entry=0/2 price=-123 last=false valid=true
+    update seq=10 entry=1/2 price=-123 last=true valid=true
+    end seq=10 valid=true
+    diagnostic seq=12 code=1 offset=0 valid=false
+    end seq=12 valid=false
+    diagnostic seq=12 code=2 offset=0 valid=false
+    diagnostic seq=13 code=7 offset=18 valid=false
+    end seq=13 valid=false
     |}]
 ;;

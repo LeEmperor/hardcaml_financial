@@ -1,0 +1,11 @@
+; University of Florida
+; Author: Bohdan Purtell
+; Module: "dune"
+; Decoder completion and abort ownership regression suite.
+(library
+ (name mbp_decoder_inline_tests)
+ (modules mbp_decoder_testbench mbp_decoder_unit_quickcheck_tests mbp_decoder_expect_tests
+          mbp_decoder_invariant_tests)
+ (inline_tests (flags (:standard -source-tree-root .)))
+ (libraries core hardcaml cme_of_hardcaml schema_test_support hardcaml_step_testbench hardcaml_verif stream_test_support)
+ (preprocess (pps ppx_hardcaml ppx_jane)))

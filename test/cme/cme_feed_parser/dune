@@ -1,52 +1,55 @@
 ; University of Florida
 ; Author: Bohdan Purtell
-;
-; Dune specs for the CME feed parser verif suite
+; Module: "dune"
+; Parser contract/behavior inline suites, the readable event trace, and the
+; compile-only legacy harness.
+
+(library
+ (name cme_parser_test_support)
+ (wrapped false)
+ (modules cme_feed_parser_testbench)
+ (libraries core hardcaml cme_of_hardcaml cme_schema schema_test_support hardcaml_step_testbench hardcaml_verif cme_verif stream_test_support)
+ (preprocess (pps ppx_hardcaml ppx_jane)))
 
 (library
  (name cme_feed_parser_inline_tests)
- (modules
-  cme_feed_parser_testbench
-  cme_feed_parser_unit_quickcheck_tests
-  cme_feed_parser_expect_tests)
- ; The trailing -source-tree-root wins over the one dune passes (%{workspace_root},
- ; ../../.. from here). Works around a ppx_expect v0.18~preview bug: it drops the
- ; directory from the test file's path when registering a test, then rebuilds the path
- ; at exit from the bare filename plus -source-tree-root, yielding
- ; _build/default/<basename>, which does not exist. "." points it at the runner's cwd,
- ; where dune copies the sources. Drop this if a later ppx_expect fixes the path handling.
+ (modules cme_feed_parser_unit_quickcheck_tests cme_feed_parser_expect_tests cme_feed_parser_contract_tests phase6_stress_tests)
+ ; ppx_expect v0.18 preview needs the copied source directory as its root.
  (inline_tests
-  (flags
-   (:standard -source-tree-root .)))
- (libraries
-  core
-  hardcaml
-  cme_of_hardcaml
-  hardcaml_waveterm
-  hardcaml_step_testbench
-  hardcaml_verif)
- (preprocess
-  (pps ppx_hardcaml ppx_jane))
- (lint
-  (pps ppx_js_style))
- (flags
-  (:standard -w -27-57-33-34-35-40-63-47-26)))
+  (deps ../../../docs/templates.xml)
+  (flags (:standard -source-tree-root .)))
+ (libraries cme_parser_test_support core hardcaml cme_of_hardcaml cme_schema schema_test_support hardcaml_step_testbench hardcaml_verif cme_verif stream_test_support)
+ (preprocess (pps ppx_hardcaml ppx_jane)))
 
-; The legacy harness is a bare (executable): built by [dune build] so it keeps
-; type-checking against the RTL, never invoked by [dune runtest].
+(executable
+ (name phase6_performance)
+ (modules phase6_performance)
+ (libraries core cme_parser_test_support)
+ (preprocess (pps ppx_jane)))
+
+(rule
+ (alias performance-check)
+ (deps ../../../docs/templates.xml)
+ (action (run %{exe:phase6_performance.exe} --check)))
+
+(rule
+ (alias performance-report)
+ (deps ../../../docs/templates.xml)
+ (action (run %{exe:phase6_performance.exe})))
+
+(executable
+ (name event_trace)
+ (modules event_trace)
+ (libraries core core_unix.sys_unix cme_schema cme_parser_test_support)
+ (preprocess (pps ppx_jane)))
+
+(rule
+ (alias event-trace)
+ (deps ../../../docs/templates.xml)
+ (action (run %{exe:event_trace.exe})))
 
 (executable
  (name cme_feed_parser_legacy_assertion_test)
  (modules cme_feed_parser_legacy_assertion_test)
- (libraries
-  core
-  hardcaml
-  cme_of_hardcaml
-  hardcaml_waveterm
-  helper_tb_functions)
- (preprocess
-  (pps ppx_hardcaml ppx_jane))
- (lint
-  (pps ppx_js_style))
- (flags
-  (:standard -w -27-57-33-34-35-40-63-47-26)))
+ (libraries core hardcaml cme_of_hardcaml stream_test_support)
+ (preprocess (pps ppx_hardcaml ppx_jane)))

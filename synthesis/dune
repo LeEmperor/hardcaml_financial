@@ -1,23 +1,18 @@
 ; University of Florida
 ; Author: Bohdan Purtell
-;
-; Vivado synthesis estimates. Kept out of the default build's critical path: this is a
-; separate executable, not part of any test alias.
+; Module: "dune"
+; Xilinx reporting executable, report support, and failure-path inline tests.
+
+(library
+ (name cme_report_support)
+ (modules report_support report_support_tests)
+ (inline_tests (flags (:standard -source-tree-root .)))
+ (libraries async core core_unix hardcaml_xilinx_reports)
+ (preprocess (pps ppx_jane)))
 
 (executable
  (name xilinx_reports)
- (libraries
-  async
-  core
-  core_unix
-  core_unix.command_unix
-  cme_of_hardcaml
-  uart_of_hardcaml
-  uart_validation
-  hardcaml_xilinx_reports)
- (flags
-  (:standard -w -27-57-33-34-35-40-63-47-26))
- (preprocess
-  (pps ppx_jane))
- (lint
-  (pps ppx_js_style)))
+ (modules xilinx_reports)
+ (libraries async core core_unix.command_unix hardcaml_xilinx_reports
+            cme_of_hardcaml cme_report_support stream_test_support)
+ (preprocess (pps ppx_jane)))

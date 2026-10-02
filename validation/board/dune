@@ -1,0 +1,18 @@
+; University of Florida
+; Author: Bohdan Purtell
+; Module: "dune"
+; Native Arty board validation harness for the CME feed parser. The board interface,
+; clocking helpers and complete MAC/IPv4/UDP datapath come from hardcaml_networking as an
+; ordinary OCaml dependency, so the generator emits one self-contained RTL hierarchy.
+(library
+ (name cme_board_validation)
+ (libraries core hardcaml hardcaml_networking cme_of_hardcaml)
+ (modules
+  board_scaffolding
+  cme_validation_sink
+  cme_validation_core
+  cme_feed_parser_validation_harness_arty)
+ (flags
+  (:standard -w -27-57-33-34-35-40-63-47-26))
+ (preprocess
+  (pps ppx_hardcaml ppx_jane)))

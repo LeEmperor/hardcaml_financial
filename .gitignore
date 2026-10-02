@@ -16,6 +16,10 @@ _build/
 # build artifacts
 *.exe
 *.bc
+/cme_mdp3_feed_parser.v
+/cme_feed_parser_validation_harness_arty.v
+/cme_feed_parser_validation_harness_arty_sim.v
+/uart_test_top.v
 
 # build system
 _opam/
@@ -38,3 +42,6 @@ __pycache__/
 
 # claude
 CLAUDE.md
+
+# vendored networking checkout (see scripts/link-networking.sh)
+/vendor/

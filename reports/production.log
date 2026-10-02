@@ -1,0 +1,43 @@
+Profile: production; part xcu50-fsvh2104-2-e; clock clock_i at 156.25 MHz (6.400 ns period); establishes 10G timing closure; the only profile that can establish it
+Target: cme-feed-parser; ingress depth=65; event depth=16 (where applicable)
+Creating xilinx report projects in /home/wayne/devel/jane/cme/reports/production
+Running project for cme_feed_parser
+Completed project for cme_feed_parser
+Project for cme_feed_parser lives in /home/wayne/devel/jane/cme/reports/production/cme_feed_parser
+┌─────────────────────────────────────────────────────┬─────────────┐
+│ NAME                                                │     clock_i │
+├─────────────────────────────────────────────────────┼─────────────┤
+│ cme_feed_parser                                     │ 0.327/0.042 │
+│  cme_event_fifo (inst = cme_event_fifo)             │           - │
+│  cme_mbp_decoder (inst = cme_mbp_decoder)           │           - │
+│  cme_event_orderer (inst = cme_event_orderer)       │           - │
+│  cme_message_pipeline (inst = cme_message_pipeline) │           - │
+└─────────────────────────────────────────────────────┴─────────────┘
+
+Profile: production; part xcu50-fsvh2104-2-e; clock clock_i at 156.25 MHz (6.400 ns period); establishes 10G timing closure; the only profile that can establish it
+
+Vivado utilization summary (/home/wayne/devel/jane/cme/reports/production/cme_feed_parser/post_route_cme_feed_parser.utilization)
+  RESOURCE                           USED  AVAILABLE      UTIL%
+  CLB LUTs                           8727     871680       1.00
+  LUT as Logic                       8351     871680       0.96
+  LUT as Memory                       376     403200       0.09
+  LUT as Distributed RAM              376                      
+  LUT as Shift Register                 0                      
+  CLB Registers                      6003    1743360       0.34
+  Register as Flip Flop              6003    1743360       0.34
+  CARRY8                              101     108960       0.09
+  F7 Muxes                             15     435840      <0.01
+  F8 Muxes                              0     217920       0.00
+  F9 Muxes                              0     108960       0.00
+  Block RAM Tile                     11.5       1344       0.86
+  DSPs                                  8       5952       0.13
+
+Vivado timing summary (/home/wayne/devel/jane/cme/reports/production/cme_feed_parser/post_route_cme_feed_parser.timing)
+  Setup :            0  Failing Endpoints,  Worst Slack        0.327ns,  Total Violation        0.000ns
+  Hold  :            0  Failing Endpoints,  Worst Slack        0.042ns,  Total Violation        0.000ns
+  PW    :            0  Failing Endpoints,  Worst Slack        2.658ns,  Total Violation        0.000ns
+
+Report artifacts
+  compact:     /home/wayne/devel/jane/cme/reports/production/cme_feed_parser/post_route_report.txt
+  utilization: /home/wayne/devel/jane/cme/reports/production/cme_feed_parser/post_route_cme_feed_parser.utilization
+  timing:      /home/wayne/devel/jane/cme/reports/production/cme_feed_parser/post_route_cme_feed_parser.timing
