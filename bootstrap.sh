@@ -6,6 +6,7 @@ set -euo pipefail
 #   OPAM_SWITCH=<switch-name> ./bootstrap.sh
 SWITCH="${OPAM_SWITCH:-5.2.0+ox}"
 
+# We expect OxCaml 5.2.x for now.
 REQUIRED_OCAML_PREFIX="${REQUIRED_OCAML_PREFIX:-5.2}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,20 +14,28 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DEPS=0
 
 # Keep this list intentionally small and explicit.
+# Do not use `opam install . --deps-only` by default against a shared switch.
 REQUIRED_PACKAGES=(
   dune
-  hardcaml
-  ppx_hardcaml
   core
+  hardcaml
+  hardcaml_xilinx_reports
+  ppx_hardcaml
+  hardcaml_circuits
 )
 
 TEST_PACKAGES=(
   hardcaml_waveterm
+  hardcaml_step_testbench
+  ppx_expect
+  base_quickcheck
   alcotest
 )
 
 DEV_PACKAGES=(
+  ocaml-lsp-server
   ocamlformat
+  ppx_js_style
 )
 
 die() {
@@ -39,7 +48,7 @@ usage() {
 usage: ./bootstrap.sh [--install-deps]
 
 Default behavior:
-  Verify shared OxCaml switch and required packages.
+  Verify the shared OxCaml switch and required opam packages.
 
 Options:
   --install-deps
@@ -125,6 +134,7 @@ EOF
 
 package_is_installed() {
   local pkg="$1"
+
   opam list \
     --switch="$SWITCH" \
     --installed \
@@ -160,6 +170,7 @@ check_packages() {
 
 install_known_packages() {
   echo "Installing known project packages into switch '$SWITCH'..."
+
   opam install --switch="$SWITCH" -y \
     "${REQUIRED_PACKAGES[@]}" \
     "${TEST_PACKAGES[@]}" \
@@ -180,10 +191,12 @@ write_env_file() {
 #
 #   source ./env.sh
 #
-# This sets the default opam switch used by wrapper scripts.
+# This sets the default opam switch used by the dune wrapper scripts
+# in ./scripts and ./tools.
 
 export OPAM_SWITCH="$SWITCH"
 EOF
+
   echo "Wrote env.sh"
 }
 
@@ -200,11 +213,11 @@ main() {
   echo
   echo "Bootstrap complete."
   echo
-  echo "Enable the opam switch in this shell:"
+  echo "Select the opam switch for this shell:"
   echo
   echo "  source ./env.sh"
   echo
-  echo "Then use:"
+  echo "Then build, test, and format with dune:"
   echo
   echo "  ./scripts/with-switch.sh dune build"
   echo "  ./scripts/with-switch.sh dune runtest"

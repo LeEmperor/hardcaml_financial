@@ -1,59 +1,40 @@
-(*
-  this is an MDP 3.0 Unpacker
+(* University of Florida *)
+(* Author: Bohdan Purtell *)
+(* Module: "cme_feed_parser.ml" *)
+(* CME MDP 3.0 unpacker.
+
+   Skeleton: the AXI-Stream-shaped ports are settled, the datapath is not. The block
+   accepts a 64-byte beat per cycle and is meant to emit one unpacked SBE message per
+   beat; [slave_ready] is tied high until there is a datapath to backpressure for.
+
+   The module follows the repository's [I] / [O] / [create scope] shape rather than
+   nesting a second module of the same name inside the file, so [Cme_feed_parser.I] is the
+   interface and [Circuit.With_interface] can be applied to it directly.
 *)
 
-open Hardcaml
+open! Core
+open! Hardcaml
+open! Signal
 
-module Cme_feed_parser = struct
-  (* input port *)
-  module I = struct
-    type 'a t =
-      { 
-        clk   : 'a;
-        rst   : 'a;
-
-        (* behave like an AXIS *)
-        valid : 'a;
-        data  : 'a [@bytes 64];
-      }
-    [@@deriving hardcaml]
-  end
-
-  (* output port*)
-  module O = struct
-    type 'a t =
-      {
-        data_out : 'a [@bits 512];
-        slave_ready : 'a;
-      }
-    [@@deriving hardcaml]
-  end
-
-  (** Combinational/RTL implementation *)
-  let create (i : _ I.t) : _ O.t =
-
-
-
-
-    (* resulting thingy *)
-    {
-      O.data_out    = Signal.zero 512;
-      O.slave_ready = Signal.vdd;
+module I = struct
+  type 'a t =
+    { clk : 'a
+    ; rst : 'a
+    ; (* AXI-Stream-shaped ingress: one 64-byte beat per cycle. *)
+      valid : 'a
+    ; data : 'a [@bits 512]
     }
-
+  [@@deriving hardcaml]
 end
 
-(** Build a [Circuit.t] from the implementation above *)
-let circuit () : Circuit.t =
-  let module C = Circuit.With_interface (Cme_feed_parser.I) (Cme_feed_parser.O) in
-  C.create_exn ~name:"cme_feed_parser" Cme_feed_parser.create
+module O = struct
+  type 'a t =
+    { data_out : 'a [@bits 512]
+    ; slave_ready : 'a
+    }
+  [@@deriving hardcaml]
+end
 
-  (*create_exn is a function that takes in 
-    1. a labelled name 
-    2. a function that follows the signature:
-        Signal.t I.t -> Signal.t O.t
-    and returns:
-      Circuit.t
-  *)
-
-
+let create (_scope : Scope.t) (_i : _ I.t) : _ O.t =
+  { O.data_out = Signal.zero 512; slave_ready = Signal.vdd }
+;;

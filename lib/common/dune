@@ -1,25 +1,38 @@
+; University of Florida
+; Author: Bohdan Purtell
+;
+; Dune specs for the shared board/common blocks and the RTL generator entry point.
+
 (executables
  (modes byte exe)
  (names generate)
  (libraries
+  core.command
+  core_unix.command_unix
   core
   hardcaml
-  uart_of_hardcaml
+  jane_rope
   helper_circuits
+  uart_of_hardcaml
   cme_of_hardcaml
-  )
+  uart_validation)
  (modules generate)
- (flags (:standard -w -27-57-33-34-35-40-63-47-26))
+ (flags
+  (:standard -w -27-57-33-34-35-40-63-47-26))
  (preprocess
   (pps ppx_jane))
+ (lint
+  (pps ppx_js_style))
  (promote))
 
 (library
  (name helper_circuits)
  (wrapped false)
  (libraries core hardcaml hardcaml_circuits)
- (modules helper_circuits board_top clk_div second_pulse)
- (flags (:standard -w -27-57-33-34-35-40-63-47-26))
+ (modules helper_circuits arty_board_top clk_div second_pulse)
+ (flags
+  (:standard -w -27-57-33-34-35-40-63-47-26))
  (preprocess
   (pps ppx_hardcaml ppx_jane))
-)
+ (lint
+  (pps ppx_js_style)))

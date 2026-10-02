@@ -1,0 +1,21 @@
+; University of Florida
+; Author: Bohdan Purtell
+;
+; Board-level validation harnesses, kept OUTSIDE lib/ on purpose: lib/ holds the reusable
+; blocks, this directory holds the throwaway scaffolding that drives them on real silicon.
+; Each harness reuses Arty_board_top.I/O (helper_circuits) as its pin contract. RTL is
+; emitted by the unified generator:
+;
+;   dune exec lib/common/generate.exe -- uart-loopback-validation
+
+(library
+ (name uart_validation)
+ (wrapped false)
+ (libraries core hardcaml helper_circuits uart_of_hardcaml hardcaml_circuits)
+ (modules board_scaffolding uart_loopback_validation_harness)
+ (flags
+  (:standard -w -27-57-33-34-35-40-63-47-26))
+ (preprocess
+  (pps ppx_hardcaml ppx_jane))
+ (lint
+  (pps ppx_js_style)))

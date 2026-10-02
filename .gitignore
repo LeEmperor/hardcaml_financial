@@ -17,12 +17,24 @@ _build/
 *.exe
 *.bc
 
+# build system
+_opam/
+env.sh
+
 # waveforms
 waves/
 *.vcd
 
-# env
-env.sh
+# release staging (build products; regenerated per release)
+MANIFEST.txt
+SHA256SUMS
+release-group/*
+!release-group/README.md
 
-#claude
+# vivado / python scratch
+validation/vivado25_proj/
+__pycache__/
+.Xil/
+
+# claude
 CLAUDE.md
